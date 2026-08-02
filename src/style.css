@@ -1,0 +1,222 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+  --accent-500: #3563ff;
+  --accent-50: #eef4ff;
+  --accent-400: #598bff;
+  --accent-600: #1e42f5;
+  --bg-gradient: linear-gradient(135deg, #f8fafc 0%, #ffffff 30%, #eef4ff 100%);
+  --glass-bg: rgba(255,255,255,0.72);
+  --glass-border: rgba(255,255,255,0.45);
+}
+
+html.dark {
+  --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 30%, #0f172a 100%);
+  --glass-bg: rgba(15,23,42,0.62);
+  --glass-border: rgba(255,255,255,0.06);
+}
+
+/* 主题变体 */
+html.theme-soft {
+  --accent-500: #d97706; --accent-50: #fffbeb; --accent-400: #f59e0b; --accent-600: #b45309;
+  --bg-gradient: linear-gradient(135deg, #fffbeb 0%, #fff7ed 30%, #fef2f2 100%);
+}
+html.theme-soft.dark {
+  --bg-gradient: linear-gradient(135deg, #451a03 0%, #7c2d12 30%, #4c0519 100%);
+}
+
+html.theme-midnight {
+  --accent-500: #2563eb; --accent-50: #eff6ff; --accent-400: #3b82f6; --accent-600: #1d4ed8;
+  --bg-gradient: linear-gradient(135deg, #f1f5f9 0%, #eff6ff 30%, #e0e7ff 100%);
+}
+html.theme-midnight.dark {
+  --bg-gradient: linear-gradient(135deg, #020617 0%, #1e1b4b 30%, #1e1b4b 100%);
+}
+
+html.theme-forest {
+  --accent-500: #059669; --accent-50: #ecfdf5; --accent-400: #10b981; --accent-600: #047857;
+  --bg-gradient: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 30%, #ccfbf1 100%);
+}
+html.theme-forest.dark {
+  --bg-gradient: linear-gradient(135deg, #022c22 0%, #064e3b 30%, #022c22 100%);
+}
+
+html.theme-lavender {
+  --accent-500: #7c3aed; --accent-50: #faf5ff; --accent-400: #8b5cf6; --accent-600: #6d28d9;
+  --bg-gradient: linear-gradient(135deg, #faf5ff 0%, #f5f3ff 30%, #fdf2f8 100%);
+  --glass-bg: rgba(250,245,255,0.72);
+}
+html.theme-lavender.dark {
+  --bg-gradient: linear-gradient(135deg, #2e1065 0%, #4c1d95 30%, #1e1b4b 100%);
+  --glass-bg: rgba(46,16,101,0.6);
+}
+
+html.theme-eyecare {
+  --accent-500: #5b8c5a; --accent-50: #eef6e8; --accent-400: #7fae6e; --accent-600: #477046;
+  --bg-gradient: linear-gradient(135deg, #f0f4e8 0%, #e8efd9 30%, #f5f0e6 100%);
+  --glass-bg: rgba(240,244,232,0.72);
+}
+html.theme-eyecare.dark {
+  --bg-gradient: linear-gradient(135deg, #1a2417 0%, #2d3a23 30%, #1a2417 100%);
+  --glass-bg: rgba(26,36,23,0.6);
+}
+
+html.theme-ocean {
+  --accent-500: #0891b2; --accent-50: #ecfeff; --accent-400: #22d3ee; --accent-600: #0e7490;
+  --bg-gradient: linear-gradient(135deg, #ecfeff 0%, #cffafe 30%, #a5f3fc 100%);
+  --glass-bg: rgba(236,254,255,0.72);
+}
+html.theme-ocean.dark {
+  --bg-gradient: linear-gradient(135deg, #083344 0%, #164e63 30%, #083344 100%);
+  --glass-bg: rgba(8,51,68,0.6);
+}
+
+html.theme-sunset {
+  --accent-500: #ea580c; --accent-50: #fff7ed; --accent-400: #fb923c; --accent-600: #c2410c;
+  --bg-gradient: linear-gradient(135deg, #fff7ed 0%, #ffedd5 30%, #fecaca 100%);
+  --glass-bg: rgba(255,247,237,0.72);
+}
+html.theme-sunset.dark {
+  --bg-gradient: linear-gradient(135deg, #431407 0%, #7c2d12 30%, #4c0519 100%);
+  --glass-bg: rgba(67,20,7,0.6);
+}
+
+html.theme-sakura {
+  --accent-500: #ec4899; --accent-50: #fdf2f8; --accent-400: #f472b6; --accent-600: #db2777;
+  --bg-gradient: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 30%, #fbcfe8 100%);
+  --glass-bg: rgba(253,242,248,0.72);
+}
+html.theme-sakura.dark {
+  --bg-gradient: linear-gradient(135deg, #500724 0%, #831843 30%, #500724 100%);
+  --glass-bg: rgba(80,7,36,0.6);
+}
+
+html.theme-ink {
+  --accent-500: #ca8a04; --accent-50: #fefce8; --accent-400: #facc15; --accent-600: #a16207;
+  --bg-gradient: linear-gradient(135deg, #f5f5f4 0%, #e7e5e4 30%, #d6d3d1 100%);
+  --glass-bg: rgba(245,245,244,0.72);
+}
+html.theme-ink.dark {
+  --bg-gradient: linear-gradient(135deg, #1c1917 0%, #292524 30%, #1c1917 100%);
+  --glass-bg: rgba(28,25,23,0.62);
+}
+
+html.theme-aurora {
+  --accent-500: #14b8a6; --accent-50: #f0fdfa; --accent-400: #2dd4bf; --accent-600: #0d9488;
+  --bg-gradient: linear-gradient(135deg, #f0fdfa 0%, #e0e7ff 30%, #f5f3ff 100%);
+  --glass-bg: rgba(240,253,250,0.72);
+}
+html.theme-aurora.dark {
+  --bg-gradient: linear-gradient(135deg, #022c22 0%, #1e1b4b 30%, #042f2e 100%);
+  --glass-bg: rgba(2,44,34,0.6);
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Microsoft YaHei', 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* 自定义滚动条 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 130, 160, 0.35);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(120, 130, 160, 0.55); }
+
+@layer components {
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+  }
+  .btn {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 active:scale-95 cursor-pointer;
+  }
+  .btn-primary {
+    @apply btn text-white shadow-sm;
+    background: var(--accent-500);
+  }
+  .btn-primary:hover {
+    background: var(--accent-600);
+  }
+  .btn-ghost {
+    @apply btn bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700/60 dark:hover:bg-slate-700 dark:text-slate-200;
+  }
+  .btn-danger {
+    @apply btn bg-red-500 hover:bg-red-600 text-white;
+  }
+  .input {
+    @apply w-full px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-700/60 border border-transparent outline-none text-sm transition;
+  }
+  .input:focus {
+    border-color: var(--accent-400);
+    @apply bg-white dark:bg-slate-700;
+  }
+  .chip {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300;
+  }
+  .chip-accent {
+    @apply chip;
+    background: var(--accent-50);
+    color: var(--accent-600);
+  }
+
+  /* 替换 Tailwind brand-* 为 CSS 变量版本 */
+  .bg-accent { background: var(--accent-500); }
+  .bg-accent-50 { background: var(--accent-50); }
+  .text-accent { color: var(--accent-500); }
+  .border-accent { border-color: var(--accent-400); }
+  .ring-accent { --tw-ring-color: var(--accent-400); }
+  .from-accent { --tw-gradient-from: var(--accent-500); }
+  .to-accent { --tw-gradient-to: var(--accent-600); }
+
+  /* 按钮变体 */
+  .btn-accent {
+    @apply btn text-white shadow-sm;
+    background: var(--accent-500);
+  }
+  .btn-accent:hover { background: var(--accent-600); }
+}
+
+/* 拖拽相关 */
+.drag-handle { cursor: grab; }
+.drag-handle:active { cursor: grabbing; }
+
+/* 主题背景渐变 */
+.bg-theme {
+  background: var(--bg-gradient);
+}
+
+/* 动画 */
+@keyframes pop {
+  0% { opacity: 0; transform: scale(0.95) translateY(8px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-pop { animation: pop 0.2s ease-out; }
+
+/* Spotlight 背景过渡 */
+.spotlight-enter-active .fixed { transition: opacity 0.15s ease; }
+.spotlight-leave-active .fixed { transition: opacity 0.1s ease; }
+.spotlight-enter-from .fixed { opacity: 0; }
+.spotlight-leave-to .fixed { opacity: 0; }
+
+/* Glass 阴影 */
+.shadow-glass {
+  box-shadow: 0 8px 32px -4px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.04);
+}
+.dark .shadow-glass {
+  box-shadow: 0 8px 32px -4px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04);
+}

@@ -1,0 +1,32 @@
+appId: com.bookmark.manager
+productName: BookmarkManager
+directories:
+  output: release5
+  buildResources: build
+files:
+  - dist/**/*
+  - dist-electron/**/*
+extraResources:
+  - from: node_modules/maxmind/LICENSE
+    to: licenses/maxmind/LICENSE
+publish:
+  provider: github
+  owner: your-github-username
+  repo: bookmark-manager
+  releaseType: release
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: BookmarkManager
+  uninstallDisplayName: BookmarkManager
+portable:
+  artifactName: ${productName}-${version}-portable.exe

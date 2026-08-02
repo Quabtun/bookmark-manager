@@ -1,0 +1,7 @@
+{
+  "name": "书签统计",
+  "version": "1.0.0",
+  "description": "统计书签数量、分类分布和状态概览",
+  "main": "index.js",
+  "icon": "📊"
+}
