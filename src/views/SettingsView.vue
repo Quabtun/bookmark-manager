@@ -155,7 +155,7 @@
         <!-- 代理 -->
         <section class="glass rounded-2xl p-5">
           <h3 class="font-semibold mb-3 flex items-center gap-2">🔗 代理</h3>
-          <p class="text-xs text-slate-400 mb-3">通过代理服务器校验书签（适用于网络受限环境）</p>
+          <p class="text-xs text-slate-400 mb-3">代理用于书签校验、更新检查与更新包下载（适用于网络受限环境）</p>
           <label class="flex items-center gap-2 text-sm cursor-pointer mb-3">
             <input type="checkbox" v-model="s.proxy.enabled" class="w-4 h-4" />
             <span>启用代理</span>

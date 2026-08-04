@@ -1,14 +1,12 @@
 import { app, ipcMain, BrowserWindow, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import https from 'node:https'
-import http from 'node:http'
 import { fileURLToPath } from 'node:url'
-import { requestWithTimeout } from './http.js'
+import { requestWithTimeout, downloadToStream } from './http.js'
 import { loadSettings } from './store.js'
 import {
   compareVersions, extractFileNameFromUrl, isValidDownloadUrl,
-  pickBestAsset, buildUpdateBatContent, calcProgress
+  pickBestAsset, calcProgress
 } from './updater-logic.js'
 
 // ============================================================
@@ -139,6 +137,21 @@ async function loadAutoUpdater() {
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.allowDowngrade = false
+
+    // [FIX] 配置代理给 electron-updater（安装版模式），让检查和下载都走代理
+    try {
+      const settings = loadSettings()
+      if (settings.proxy && settings.proxy.enabled && settings.proxy.host) {
+        const proto = settings.proxy.type === 'socks5' ? 'socks5' : 'http'
+        const auth = settings.proxy.username
+          ? encodeURIComponent(settings.proxy.username) + ':' + encodeURIComponent(settings.proxy.password) + '@'
+          : ''
+        autoUpdater.proxy = proto + '://' + auth + settings.proxy.host + ':' + settings.proxy.port
+        console.log('[updater] electron-updater 已配置代理:', settings.proxy.host + ':' + settings.proxy.port, '(' + proto + ')')
+      }
+    } catch (e) {
+      console.warn('[updater] 配置 electron-updater 代理失败:', e.message)
+    }
 
     autoUpdater.on('update-available', (info) => {
       updateInfo = {
@@ -275,6 +288,7 @@ async function handleSilentDownload() {
 
 // ============================================================
 // 自定义下载器 —— 流式下载到暂存文件夹，支持进度和取消
+// [FIX] 使用 downloadToStream 走代理（HTTP/SOCKS5），解决更新包下载绕过代理的问题
 // [FIX] 使用 settled 标志防止双重 reject
 // [FIX] 使用 sessionId 区分不同下载周期
 // ============================================================
@@ -289,12 +303,9 @@ function downloadToStaging(url, fileName, sessionId) {
     const tmpPath = destPath + '.tmp'
     const file = fs.createWriteStream(tmpPath)
 
-    let totalBytes = 0
-    let receivedBytes = 0
-    let lastNotifyTime = 0
     let startTime = Date.now()
-    let redirectCount = 0
-    const MAX_REDIRECT = 5
+    let lastReceivedBytes = 0
+    let lastSpeedTime = Date.now()
 
     // [FIX] settled 标志：防止 reject/resolve 被多次调用
     let settled = false
@@ -302,7 +313,6 @@ function downloadToStaging(url, fileName, sessionId) {
     const safeResolve = (val) => {
       if (settled) return
       settled = true
-      // [FIX] 下载完成后清理请求引用
       customDownloadReq = null
       resolve(val)
     }
@@ -310,105 +320,66 @@ function downloadToStaging(url, fileName, sessionId) {
     const safeReject = (err) => {
       if (settled) return
       settled = true
-      // [FIX] reject 后清理请求引用
       customDownloadReq = null
+      // 取消时关闭并清理文件流
+      try { file.destroy() } catch { /* ignore */ }
+      try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
       reject(err)
     }
 
-    const cleanup = () => {
-      try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
+    // 进度回调：计算瞬时速度和 ETA
+    const onProgress = ({ receivedBytes, totalBytes }) => {
+      const now = Date.now()
+      // 计算瞬时速度（基于最近时间窗口）
+      const dt = (now - lastSpeedTime) / 1000
+      let speed = 0
+      if (dt > 0.3) {  // 至少 300ms 计算一次速度
+        speed = (receivedBytes - lastReceivedBytes) / dt
+        lastReceivedBytes = receivedBytes
+        lastSpeedTime = now
+      } else {
+        // 沿用上一次速度
+        speed = lastReceivedBytes > 0 ? (receivedBytes / ((now - startTime) / 1000)) : 0
+      }
+      const remainingBytes = totalBytes - receivedBytes
+      const eta = speed > 0 ? Math.ceil(remainingBytes / speed) : 0
+      notifyProgress(calcProgress(receivedBytes, totalBytes, now - startTime))
     }
 
-    const doRequest = (reqUrl) => {
-      let u
-      try { u = new URL(reqUrl) } catch { return safeReject(new Error('无效的下载 URL')) }
-      const lib = u.protocol === 'http:' ? http : https
-
-      const req = lib.get(u, {
-        headers: { 'User-Agent': 'BookmarkManager-Updater' },
-        timeout: 30000
-      }, (res) => {
-        // 处理重定向
-        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectCount < MAX_REDIRECT) {
-          redirectCount++
-          res.resume()
-          const newUrl = new URL(res.headers.location, u).toString()
-          return doRequest(newUrl)
-        }
-
-        if (res.statusCode !== 200) {
-          // [FIX] 消费响应体，防止 socket 挂起
-          res.resume()
-          // [FIX] 先标记 settled 再操作文件，防止 file.close 回调触发二次 reject
-          try { file.close() } catch { /* ignore */ }
-          try { file.destroy() } catch { /* ignore */ }
-          cleanup()
-          return safeReject(new Error(`下载失败: HTTP ${res.statusCode}`))
-        }
-
-        totalBytes = parseInt(res.headers['content-length'] || 0)
-
-        res.on('data', (chunk) => {
-          receivedBytes += chunk.length
-          const now = Date.now()
-          if (now - lastNotifyTime > 200 || receivedBytes === totalBytes) {
-            lastNotifyTime = now
-            // [FIX] 使用纯函数计算进度
-            notifyProgress(calcProgress(receivedBytes, totalBytes, now - startTime))
-          }
-        })
-
-        res.pipe(file)
-
-        file.on('finish', () => {
-          file.close(() => {
-            try {
-              if (fs.existsSync(destPath)) fs.unlinkSync(destPath)
-              fs.renameSync(tmpPath, destPath)
-            } catch {
-              try {
-                fs.copyFileSync(tmpPath, destPath)
-                fs.unlinkSync(tmpPath)
-              } catch (e2) {
-                cleanup()
-                return safeReject(new Error('保存文件失败: ' + e2.message))
-              }
-            }
-            // [FIX] 只有当前会话才设置 downloadedFilePath
-            if (sessionId === downloadSessionId) {
-              downloadedFilePath = destPath
-            }
-            safeResolve({ ok: true, path: destPath, size: receivedBytes })
-          })
-        })
-
-        file.on('error', (e) => {
-          // [FIX] 先关闭文件流再清理，防止文件描述符泄漏
-          try { file.close() } catch { /* file may already be closed */ }
-          try { file.destroy() } catch { /* ignore */ }
-          cleanup()
-          safeReject(e)
-        })
-      })
-
-      req.on('timeout', () => {
-        req.destroy(new Error('下载超时（30秒无响应）'))
-      })
-
-      req.on('error', (e) => {
-        // [FIX] 先关闭文件再清理，使用 safeReject 防止重复
-        try { file.close() } catch { /* file may already be closed */ }
-        cleanup()
-        safeReject(e)
-      })
-
-      // 保存请求引用，用于取消（仅当前会话有效）
+    // onRequest 回调：保存当前请求引用用于取消（仅当前会话有效）
+    const onRequest = (req) => {
       if (sessionId === downloadSessionId) {
         customDownloadReq = req
       }
     }
 
-    doRequest(url)
+    downloadToStream(url, file, {
+      onProgress,
+      timeout: 30000,
+      headers: { 'Accept': 'application/octet-stream' },
+      onRequest
+    }).then((result) => {
+      // 下载完成，关闭文件流后重命名
+      file.close(() => {
+        try {
+          if (fs.existsSync(destPath)) fs.unlinkSync(destPath)
+          fs.renameSync(tmpPath, destPath)
+        } catch {
+          try {
+            fs.copyFileSync(tmpPath, destPath)
+            fs.unlinkSync(tmpPath)
+          } catch (e2) {
+            try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
+            return safeReject(new Error('保存文件失败: ' + e2.message))
+          }
+        }
+        // [FIX] 只有当前会话才设置 downloadedFilePath
+        if (sessionId === downloadSessionId) {
+          downloadedFilePath = destPath
+        }
+        safeResolve({ ok: true, path: destPath, size: result.receivedBytes })
+      })
+    }).catch(safeReject)
   })
 }
 
@@ -577,34 +548,28 @@ export async function installUpdate() {
       return { ok: true }
     }
 
-    // portable 模式：创建批处理脚本替换 exe 并重启
+    // portable 模式：通过安装层（installer.js）执行
     if (!downloadedFilePath || !fs.existsSync(downloadedFilePath)) {
       throw new Error('下载文件不存在')
     }
 
-    const currentExe = process.execPath
+    // [FIX] 分层架构：更新窗口先显示"正在安装"状态，给 UI 时间渲染
+    // 这样更新页面不会在点击安装后立即退出
+    await new Promise(r => setTimeout(r, 800))
 
-    // [FIX] 使用纯函数生成批处理脚本
-    const batContent = buildUpdateBatContent({
+    // 调用安装层：生成 PowerShell 脚本并 spawn（PS 窗口接管显示进度）
+    const { spawnInstaller } = await import('./installer.js')
+    spawnInstaller({
       pid: process.pid,
       downloadedFilePath,
-      currentExePath: currentExe,
+      currentExePath: process.execPath,
       stagingDir: STAGING_DIR
     })
 
-    const batPath = path.join(STAGING_DIR, 'update.bat')
-    ensureStagingDir()
-    fs.writeFileSync(batPath, batContent, { encoding: 'utf8' })
+    // [FIX] 再给 UI 时间显示"应用即将重启"，然后退出
+    // PowerShell 窗口会持续显示安装进度，直到新版本启动
+    await new Promise(r => setTimeout(r, 400))
 
-    // 启动批处理脚本（隐藏窗口）
-    const { spawn } = await import('node:child_process')
-    spawn('cmd.exe', ['/c', batPath], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    }).unref()
-
-    // 退出当前应用
     app.quit()
     return { ok: true }
   } catch (e) {

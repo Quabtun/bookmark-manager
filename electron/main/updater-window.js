@@ -642,7 +642,12 @@ function getUpdaterHTML() {
       statusArea.innerHTML = '<div class="status-msg downloaded">✅ 更新已下载完成，可以安装了</div>'
       actions.innerHTML = '<button class="btn btn-success" id="btnInstall">🚀 立即安装并重启</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
     } else if (s === 'installing') {
-      statusArea.innerHTML = '<div class="status-msg installing"><div class="spinner"></div>正在安装更新，请稍候…</div>'
+      statusArea.innerHTML =
+        '<div class="status-msg installing"><div class="spinner"></div>正在安装更新，应用即将重启…</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.6">' +
+          '安装脚本已启动，请勿关闭此窗口。<br/>' +
+          '应用退出后将自动完成安装并启动新版本。' +
+        '</div>'
       actions.innerHTML = '<button class="btn btn-ghost" disabled>安装中…</button>'
     } else if (s === 'error') {
       // 检测是否是重试中的错误
