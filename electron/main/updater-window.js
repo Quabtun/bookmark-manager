@@ -458,7 +458,7 @@ function getUpdaterHTML() {
 <script>
 (function() {
   const $ = (id) => document.getElementById(id)
-  let state = { state: 'idle', updateInfo: null, downloadProgress: null, error: '', currentVersion: '', canAutoUpdate: false }
+  let state = { state: 'idle', updateInfo: null, downloadProgress: null, error: '', currentVersion: '', canAutoUpdate: false, isPortable: false }
   let vInfo = null
 
   // ---- 工具函数 ----
@@ -611,14 +611,12 @@ function getUpdaterHTML() {
         notesHtml = '<div class="release-notes">' + renderMarkdown(info.releaseNotes) + '</div>'
       }
       const dateStr = info && info.releaseDate ? info.releaseDate.slice(0, 10) : ''
-      const modeHint = state.canAutoUpdate ? '' : '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">将打开浏览器下载安装包</div>'
+      const modeHint = state.isPortable ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">将下载到暂存文件夹，安装后自动清理</div>' : ''
       statusArea.innerHTML =
         '<div class="status-msg available">✨ 发现新版本' + (info && info.version ? ' v' + info.version : '') + '</div>' +
         (dateStr ? '<div style="font-size:12px;color:var(--text-muted)">发布日期：' + dateStr + '</div>' : '') +
         notesHtml + modeHint
-      const dlBtn = state.canAutoUpdate
-        ? '<button class="btn btn-primary" id="btnDownload">📥 下载更新</button>'
-        : '<button class="btn btn-primary" id="btnDownload">📥 下载安装包</button>'
+      const dlBtn = '<button class="btn btn-primary" id="btnDownload">📥 下载更新</button>'
       actions.innerHTML = dlBtn + '<button class="btn btn-ghost" id="btnCheck">🔍 重新检查</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
     } else if (s === 'downloading') {
       const pct = prog ? prog.percent : 0
@@ -639,7 +637,7 @@ function getUpdaterHTML() {
             '<span class="progress-eta">⏳ 剩余 ' + eta + '</span>' +
           '</div>' +
         '</div>'
-      actions.innerHTML = '<button class="btn btn-ghost" id="btnCancel">💬 后台下载，关闭窗口</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
+      actions.innerHTML = '<button class="btn btn-ghost" id="btnCancel">✕ 取消下载</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
     } else if (s === 'downloaded') {
       statusArea.innerHTML = '<div class="status-msg downloaded">✅ 更新已下载完成，可以安装了</div>'
       actions.innerHTML = '<button class="btn btn-success" id="btnInstall">🚀 立即安装并重启</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
