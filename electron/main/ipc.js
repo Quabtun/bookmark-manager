@@ -15,12 +15,12 @@ import { requestWithTimeout } from './http.js'
 import { validateUrl, validateBatch } from './validator.js'
 import { generatePreview, generateBatch, getPreview, previewImagePath, previewImageName, getImagesSize, enforceCacheLimit } from './crawler.js'
 import { fetchFavicon } from './favicon.js'
-import { lookupGeo, isGeoipReady } from './geoip.js'
+import { lookupGeo, isGeoipReady, downloadDb, getDbInfo, getAllDbInfo, checkDbUpdate, deleteDefaultDb } from './geoip.js'
 import { lookupWhois, isWhoisReady } from './whois.js'
 import { suggestCategory, suggestBatch, applyAutoClassify } from './classifier.js'
 import { createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from './snapshot.js'
 import { openInBrowser, detectBrowsers } from './browser.js'
-import { parseBookmarksHtml, exportBookmarksHtml, detectBrowserBookmarks, parseBrowserBookmarks, exportStyledHtml, parsePocketCsv, exportMarkdown, parseCsv } from './browserimport.js'
+import { parseBookmarksHtml, exportBookmarksHtml, exportCategoryFolderHtml, detectBrowserBookmarks, parseBrowserBookmarks, exportStyledHtml, parsePocketCsv, exportMarkdown, parseCsv } from './browserimport.js'
 import {
   getAllCredentials, addCredential, updateCredential, deleteCredential, revealPassword,
   resetCredentialCache
@@ -30,6 +30,7 @@ import {
   resetCookieCache
 } from './cookies.js'
 import { registerUpdaterIpc } from './updater.js'
+import { listEnvironments, createEnvironment, switchEnvironment, mirrorEnvironment, deleteEnvironment, renameEnvironment, ensureDefaultEnvironment } from './category-env.js'
 
 let mainWindowRef = null
 export function getMainWindow() { return mainWindowRef }
@@ -233,6 +234,15 @@ export function registerIpc() {
   // ---- 分类 ----
   safeHandle('cat:list', async () => loadCategories())
   safeHandle('cat:save', async (_e, cats) => { saveCategories(cats); return true })
+
+  // ---- 分类环境 ----
+  safeHandle('env:list', async () => listEnvironments())
+  safeHandle('env:create', async (_e, name) => createEnvironment(name))
+  safeHandle('env:switch', async (_e, envId) => switchEnvironment(envId))
+  safeHandle('env:mirror', async (_e, name) => mirrorEnvironment(name))
+  safeHandle('env:delete', async (_e, envId) => deleteEnvironment(envId))
+  safeHandle('env:rename', async (_e, envId, name) => renameEnvironment(envId, name))
+  safeHandle('env:ensure', async () => ensureDefaultEnvironment())
 
   // ---- favicon ----
   safeHandle('favicon:fetch', async (_e, url) => fetchFavicon(url))
@@ -560,15 +570,27 @@ export function registerIpc() {
 
   safeHandle('io:exportCategory', async (_e, categoryId, categories) => {
     const allBookmarks = loadBookmarks()
-    const filtered = allBookmarks.filter(b => b.categoryId === categoryId)
+    const allCats = categories || loadCategories()
+    // 递归收集所有子分类 ID
+    const childIds = new Set([categoryId])
+    function collectChildren(pid) {
+      for (const c of allCats) {
+        if (c.parentId === pid) {
+          childIds.add(c.id)
+          collectChildren(c.id)
+        }
+      }
+    }
+    collectChildren(categoryId)
+    const filtered = allBookmarks.filter(b => childIds.has(b.categoryId))
     if (filtered.length === 0) return { exported: false, error: '该分类下没有书签' }
     const res = await dialog.showSaveDialog(getMainWindow(), {
-      title: '导出分类书签',
-      defaultPath: 'bookmarks-category.html',
+      title: '导出分类书签文件夹',
+      defaultPath: 'bookmarks-folder.html',
       filters: [{ name: '书签 HTML', extensions: ['html'] }]
     })
     if (res.canceled || !res.filePath) return { exported: false, canceled: true }
-    const html = exportBookmarksHtml(filtered, categories)
+    const html = exportCategoryFolderHtml(categoryId, allCats, allBookmarks)
     fs.writeFileSync(res.filePath, html, 'utf8')
     return { exported: true, path: res.filePath, count: filtered.length }
   })
@@ -759,6 +781,31 @@ export function registerIpc() {
     else settings.geoip.cityMmdbPath = dest
     saveSettings(settings)
     return { imported: true, path: dest }
+  })
+
+  // GeoIP 默认库下载
+  safeHandle('geoip:downloadDb', async (_e, kind) => {
+    try {
+      const result = await downloadDb(kind, (progress) => {
+        send('geoip:downloadProgress', { kind, ...progress })
+      })
+      return result
+    } catch (e) {
+      return { ok: false, error: e.message || '下载失败' }
+    }
+  })
+
+  safeHandle('geoip:getDbInfo', async (_e, kind) => {
+    if (kind) return getDbInfo(kind)
+    return getAllDbInfo()
+  })
+
+  safeHandle('geoip:checkUpdate', async () => {
+    return await checkDbUpdate()
+  })
+
+  safeHandle('geoip:deleteDb', async (_e, kind) => {
+    return deleteDefaultDb(kind)
   })
 
   // ---- 凭证 ----

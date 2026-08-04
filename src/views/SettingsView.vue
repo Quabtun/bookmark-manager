@@ -88,25 +88,67 @@
         <!-- GeoIP -->
         <section class="glass rounded-2xl p-5">
           <h3 class="font-semibold mb-3 flex items-center gap-2">📍 服务器定位</h3>
-          <p class="text-xs text-slate-400 mb-3">离线库查询不出网；未导入时用在线兜底。</p>
-          <div class="space-y-2">
+          <p class="text-xs text-slate-400 mb-3">离线库查询不出网；支持一键下载默认库并在线更新。</p>
+          <div class="space-y-2 mb-3">
             <div class="flex items-center gap-2">
-              <span class="text-sm w-28 text-slate-500">City 库</span>
-              <span class="flex-1 text-xs px-3 py-1.5 rounded bg-slate-100 dark:bg-slate-700">{{ s.geoip.cityMmdbPath ? '✅ 已导入' : '❌ 未导入' }}</span>
+              <span class="text-sm w-16 text-slate-500 shrink-0">City 库</span>
+              <span class="flex-1 text-xs px-3 py-1.5 rounded bg-slate-100 dark:bg-slate-700 truncate">
+                {{ dbInfo.city?.exists ? `✅ ${dbInfo.city.isDefault ? '默认库' : '手动导入'} ${dbInfo.city.sizeMB}MB` : '❌ 未导入' }}
+              </span>
+              <button @click="downloadDb('city')" :disabled="downloading.city" class="btn-ghost text-xs whitespace-nowrap">
+                {{ downloading.city ? '⏳ 下载中' : '📥 下载' }}
+              </button>
               <button @click="importMmdb('city')" class="btn-ghost text-xs">导入</button>
+              <button v-if="dbInfo.city?.isDefault" @click="deleteDb('city')" class="text-xs text-red-400 hover:text-red-600 px-1">✕</button>
             </div>
             <div class="flex items-center gap-2">
-              <span class="text-sm w-28 text-slate-500">ASN 库</span>
-              <span class="flex-1 text-xs px-3 py-1.5 rounded bg-slate-100 dark:bg-slate-700">{{ s.geoip.asnMmdbPath ? '✅ 已导入' : '❌ 未导入' }}</span>
+              <span class="text-sm w-16 text-slate-500 shrink-0">ASN 库</span>
+              <span class="flex-1 text-xs px-3 py-1.5 rounded bg-slate-100 dark:bg-slate-700 truncate">
+                {{ dbInfo.asn?.exists ? `✅ ${dbInfo.asn.isDefault ? '默认库' : '手动导入'} ${dbInfo.asn.sizeMB}MB` : '❌ 未导入' }}
+              </span>
+              <button @click="downloadDb('asn')" :disabled="downloading.asn" class="btn-ghost text-xs whitespace-nowrap">
+                {{ downloading.asn ? '⏳ 下载中' : '📥 下载' }}
+              </button>
               <button @click="importMmdb('asn')" class="btn-ghost text-xs">导入</button>
+              <button v-if="dbInfo.asn?.isDefault" @click="deleteDb('asn')" class="text-xs text-red-400 hover:text-red-600 px-1">✕</button>
             </div>
-            <label class="flex items-center gap-2 mt-2 text-sm cursor-pointer">
-              <input type="checkbox" v-model="s.geoip.allowOnlineFallback" @change="save" class="w-4 h-4" />
-              <span>允许在线兜底</span>
-            </label>
-            <div class="text-xs text-slate-400 mt-2">
-              📥 <a href="#" @click.prevent="openLink" class="text-accent hover:underline">MaxMind 官网</a> 免费注册下载 .mmdb 文件
+          </div>
+
+          <!-- 下载进度 -->
+          <div v-if="downloadProgress" class="mb-3 px-2">
+            <div class="flex items-center justify-between text-xs mb-1">
+              <span class="text-slate-500">{{ downloadProgress.kind === 'city' ? 'City' : 'ASN' }} 库下载中…</span>
+              <span class="font-mono">{{ downloadProgress.percent }}%</span>
             </div>
+            <div class="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div class="h-full bg-accent transition-all duration-200" :style="{ width: downloadProgress.percent + '%' }"></div>
+            </div>
+            <div class="text-[10px] text-slate-400 mt-0.5 font-mono text-right">
+              {{ (downloadProgress.received / 1048576).toFixed(1) }} / {{ (downloadProgress.total / 1048576).toFixed(1) }} MB
+            </div>
+          </div>
+
+          <!-- 检查更新 + 一键更新 -->
+          <div class="flex items-center gap-2 mb-2 flex-wrap">
+            <button @click="checkDbUpdate" :disabled="checkingUpdate" class="btn-ghost text-xs">
+              {{ checkingUpdate ? '⏳ 检查中…' : '🔄 检查更新' }}
+            </button>
+            <button @click="downloadAll" :disabled="downloading.city || downloading.asn" class="btn-accent text-xs">
+              📥 下载/更新全部
+            </button>
+            <span v-if="updateInfo" :class="['text-xs', updateInfo.hasUpdate ? 'text-blue-500' : 'text-slate-400']">
+              {{ updateInfo.hasUpdate ? '✨ 有新版本可用' : '✅ 已是最新' }}
+              <span v-if="updateInfo.error" class="text-red-400">{{ updateInfo.error }}</span>
+            </span>
+          </div>
+
+          <label class="flex items-center gap-2 mt-2 text-sm cursor-pointer">
+            <input type="checkbox" v-model="s.geoip.allowOnlineFallback" @change="save" class="w-4 h-4" />
+            <span>允许在线兜底</span>
+          </label>
+          <div class="text-xs text-slate-400 mt-2">
+            默认库来源：P3TERX/GeoLite.mmdb（免费自动更新）·
+            <a href="#" @click.prevent="openLink" class="text-accent hover:underline">MaxMind 官网</a> 手动下载
           </div>
         </section>
 
@@ -346,6 +388,13 @@ const proxyMsg = ref('')
 const backupSaving = ref(false)
 const backupList = ref([])
 
+// GeoIP 默认库
+const dbInfo = ref({ city: null, asn: null })
+const downloading = ref({ city: false, asn: false })
+const downloadProgress = ref(null)
+const checkingUpdate = ref(false)
+const updateInfo = ref(null)
+
 // ---- 版本更新状态 ----
 const appVersion = ref('…')
 const buildMode = ref('')
@@ -445,6 +494,7 @@ async function loadBackupList() {
 
 onMounted(async () => {
   await refreshCache()
+  await loadDbInfo()
   dataDirInfo.value = await window.api.invoke('dataDir:get')
   await loadBackupList()
   // 获取当前版本信息
@@ -459,6 +509,11 @@ onMounted(async () => {
   // 监听更新状态变化（来自独立更新窗口的广播）
   updaterUnsub.push(window.api.on('updater:state-changed', (payload) => {
     updaterState.value = payload
+  }))
+
+  // 监听 GeoIP 下载进度
+  updaterUnsub.push(window.api.on('geoip:downloadProgress', (payload) => {
+    downloadProgress.value = payload
   }))
 
   // 自动检查更新（后台静默检查，不弹窗口）
@@ -566,7 +621,61 @@ async function enforceLimitNow() { await window.api.invoke('preview:enforceLimit
 
 async function importMmdb(kind) {
   const r = await window.api.invoke('geoip:importMmdb', kind)
-  if (r.imported) { window.$toast('已导入数据库', 'success') }
+  if (r.imported) {
+    window.$toast('已导入数据库', 'success')
+    await loadDbInfo()
+  }
+}
+
+async function loadDbInfo() {
+  dbInfo.value = await window.api.invoke('geoip:getDbInfo')
+}
+
+async function downloadDb(kind) {
+  downloading.value[kind] = true
+  downloadProgress.value = null
+  try {
+    const r = await window.api.invoke('geoip:downloadDb', kind)
+    if (r.ok) {
+      window.$toast(`${kind === 'city' ? 'City' : 'ASN'} 库下载成功 (${(r.size / 1048576).toFixed(1)}MB)`, 'success')
+      await loadDbInfo()
+    } else {
+      window.$toast('下载失败: ' + (r.error || '未知错误'), 'error')
+    }
+  } catch (e) {
+    window.$toast('下载失败: ' + (e.message || e), 'error')
+  } finally {
+    downloading.value[kind] = false
+    downloadProgress.value = null
+  }
+}
+
+async function checkDbUpdate() {
+  checkingUpdate.value = true
+  try {
+    updateInfo.value = await window.api.invoke('geoip:checkUpdate')
+  } catch (e) {
+    updateInfo.value = { hasUpdate: false, error: e.message }
+  } finally {
+    checkingUpdate.value = false
+  }
+}
+
+async function downloadAll() {
+  await downloadDb('city')
+  await downloadDb('asn')
+  window.$toast('全部数据库已更新', 'success')
+}
+
+async function deleteDb(kind) {
+  if (!confirm(`确定删除${kind === 'city' ? 'City' : 'ASN'}默认库？`)) return
+  const r = await window.api.invoke('geoip:deleteDb', kind)
+  if (r.ok) {
+    window.$toast('已删除', 'info')
+    await loadDbInfo()
+  } else {
+    window.$toast('删除失败: ' + (r.error || ''), 'error')
+  }
 }
 
 async function autoDetectProxy() {

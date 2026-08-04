@@ -133,6 +133,71 @@ export function exportBookmarksHtml(bookmarks, categories) {
   return lines.join('\n')
 }
 
+// ========== 导出整个分类文件夹（含子分类）为 Chrome 兼容 HTML ==========
+
+export function exportCategoryFolderHtml(categoryId, categories, bookmarks) {
+  const esc = (s) => (s || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+
+  const now = Math.floor(Date.now() / 1000)
+  const lines = []
+
+  // 构建子分类
+  function getChildren(parentId) {
+    return (categories || [])
+      .filter(c => c.parentId === parentId)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+  }
+
+  function getBookmarksForCategory(catId) {
+    return (bookmarks || []).filter(b => b.categoryId === catId)
+  }
+
+  // 递归生成分类树
+  function renderCategory(cat, depth) {
+    const indent = '    '.repeat(depth)
+    const childCats = getChildren(cat.id)
+    const catBookmarks = getBookmarksForCategory(cat.id)
+
+    lines.push(`${indent}<DT><H3 ADD_DATE="${now}">${esc(cat.name)}</H3>`)
+    lines.push(`${indent}<DL><p>`)
+
+    for (const child of childCats) {
+      renderCategory(child, depth + 1)
+    }
+
+    for (const bm of catBookmarks) {
+      const add = bm.addedAt ? Math.floor(bm.addedAt / 1000) : now
+      lines.push(`${indent}    <DT><A HREF="${esc(bm.url)}" ADD_DATE="${add}">${esc(bm.title || bm.url)}</A>`)
+    }
+
+    lines.push(`${indent}</DL><p>`)
+  }
+
+  lines.push('<!DOCTYPE NETSCAPE-Bookmark-file-1>')
+  lines.push('<!-- This is an automatically generated file. -->')
+  lines.push('<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">')
+  lines.push('<TITLE>Bookmarks</TITLE>')
+  lines.push('<H1>Bookmarks</H1>')
+  lines.push('<DL><p>')
+
+  const rootCat = (categories || []).find(c => c.id === categoryId)
+  if (rootCat) {
+    renderCategory(rootCat, 1)
+  } else {
+    // 分类不存在，直接输出该 categoryId 下的书签
+    const catBookmarks = getBookmarksForCategory(categoryId)
+    for (const bm of catBookmarks) {
+      const add = bm.addedAt ? Math.floor(bm.addedAt / 1000) : now
+      lines.push(`    <DT><A HREF="${esc(bm.url)}" ADD_DATE="${add}">${esc(bm.title || bm.url)}</A>`)
+    }
+  }
+
+  lines.push('</DL><p>')
+  return lines.join('\n')
+}
+
 // ========== CSV 导入 ==========
 
 export function parseCsv(text) {

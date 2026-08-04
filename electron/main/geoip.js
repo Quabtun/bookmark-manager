@@ -1,37 +1,276 @@
 import fs from 'node:fs'
+import path from 'node:path'
+import https from 'node:https'
+import http from 'node:http'
 import { resolveHost, requestWithTimeout } from './http.js'
-import { loadSettings } from './store.js'
+import { DATA_DIR, loadSettings } from './store.js'
 
 let cityLookup = null
 let asnLookup = null
 let loadedPaths = { city: '', asn: '' }
 
+// ============================================================
+// 默认库管理 —— 从 GitHub 免费源下载 GeoLite2 数据库
+// P3TERX/GeoLite.mmdb 是广为人知的免费自动更新 GeoLite2 仓库
+// ============================================================
+const DEFAULT_DB_NAMES = {
+  city: 'GeoLite2-City.mmdb',
+  asn: 'GeoLite2-ASN.mmdb'
+}
+
+const GEOLITE_DOWNLOAD_URLS = {
+  city: 'https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/GeoLite2-City.mmdb',
+  asn: 'https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/GeoLite2-ASN.mmdb'
+}
+
+const GEOLITE_API_URL = 'https://api.github.com/repos/P3TERX/GeoLite.mmdb/releases/latest'
+
+function getGeoipDir() {
+  return path.join(DATA_DIR, 'geoip')
+}
+
+function getDefaultDbPath(kind) {
+  return path.join(getGeoipDir(), DEFAULT_DB_NAMES[kind] || DEFAULT_DB_NAMES.city)
+}
+
+// 获取有效的库路径：优先用户手动导入的，其次默认库
+function getEffectiveDbPath(kind) {
+  const settings = loadSettings()
+  const userPath = kind === 'asn' ? settings.geoip.asnMmdbPath : settings.geoip.cityMmdbPath
+  if (userPath && fs.existsSync(userPath)) return userPath
+  const defaultPath = getDefaultDbPath(kind)
+  if (fs.existsSync(defaultPath)) return defaultPath
+  return null
+}
+
 // 懒加载 mmdb
 async function getLookups() {
-  const settings = loadSettings()
-  const cityPath = settings.geoip.cityMmdbPath
-  const asnPath = settings.geoip.asnMmdbPath
+  const cityPath = getEffectiveDbPath('city')
+  const asnPath = getEffectiveDbPath('asn')
 
-  if (cityPath && loadedPaths.city !== cityPath && fs.existsSync(cityPath)) {
+  if (cityPath && loadedPaths.city !== cityPath) {
     try {
       const maxmind = await import('maxmind')
       cityLookup = await maxmind.open(cityPath)
       loadedPaths.city = cityPath
     } catch (e) { cityLookup = null; console.error('city mmdb load fail', e.message) }
+  } else if (!cityPath) {
+    cityLookup = null
+    loadedPaths.city = ''
   }
-  if (asnPath && loadedPaths.asn !== asnPath && fs.existsSync(asnPath)) {
+
+  if (asnPath && loadedPaths.asn !== asnPath) {
     try {
       const maxmind = await import('maxmind')
       asnLookup = await maxmind.open(asnPath)
       loadedPaths.asn = asnPath
     } catch (e) { asnLookup = null; console.error('asn mmdb load fail', e.message) }
+  } else if (!asnPath) {
+    asnLookup = null
+    loadedPaths.asn = ''
   }
+
   return { cityLookup, asnLookup }
 }
 
 export function isGeoipReady() {
-  const settings = loadSettings()
-  return !!(settings.geoip.cityMmdbPath && fs.existsSync(settings.geoip.cityMmdbPath))
+  return !!getEffectiveDbPath('city')
+}
+
+// 获取数据库信息
+export function getDbInfo(kind) {
+  const effectivePath = getEffectiveDbPath(kind)
+  if (!effectivePath) return { exists: false, isDefault: false, kind }
+
+  const isDefault = effectivePath === getDefaultDbPath(kind)
+  try {
+    const stat = fs.statSync(effectivePath)
+    return {
+      exists: true,
+      path: effectivePath,
+      isDefault,
+      kind,
+      size: stat.size,
+      sizeMB: +(stat.size / 1024 / 1024).toFixed(1),
+      modifiedAt: stat.mtime.toISOString()
+    }
+  } catch {
+    return { exists: false, isDefault: false, kind }
+  }
+}
+
+// 获取所有数据库信息
+export function getAllDbInfo() {
+  return {
+    city: getDbInfo('city'),
+    asn: getDbInfo('asn')
+  }
+}
+
+// 流式下载 mmdb 文件（支持大文件 + 进度回调 + 重定向）
+export function downloadDb(kind, onProgress) {
+  return new Promise((resolve, reject) => {
+    const url = GEOLITE_DOWNLOAD_URLS[kind]
+    if (!url) return reject(new Error('无效的数据库类型: ' + kind))
+
+    // 确保目录存在
+    const geoipDir = getGeoipDir()
+    if (!fs.existsSync(geoipDir)) fs.mkdirSync(geoipDir, { recursive: true })
+
+    const destPath = getDefaultDbPath(kind)
+    const tmpPath = destPath + '.tmp-' + process.pid
+    const file = fs.createWriteStream(tmpPath)
+
+    let totalBytes = 0
+    let receivedBytes = 0
+    let redirectCount = 0
+    const MAX_REDIRECT = 5
+
+    const cleanup = () => {
+      try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
+    }
+
+    const doRequest = (reqUrl) => {
+      let u
+      try { u = new URL(reqUrl) } catch { return reject(new Error('无效的下载 URL')) }
+      const lib = u.protocol === 'http:' ? http : https
+
+      const req = lib.get(u, {
+        headers: { 'User-Agent': 'BookmarkManager-GeoIP-Updater' },
+        timeout: 30000
+      }, (res) => {
+        // 处理重定向
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectCount < MAX_REDIRECT) {
+          redirectCount++
+          res.resume()
+          const newUrl = new URL(res.headers.location, u).toString()
+          return doRequest(newUrl)
+        }
+
+        if (res.statusCode !== 200) {
+          file.close()
+          cleanup()
+          return reject(new Error(`下载失败: HTTP ${res.statusCode}`))
+        }
+
+        totalBytes = parseInt(res.headers['content-length'] || 0)
+
+        res.on('data', (chunk) => {
+          receivedBytes += chunk.length
+          if (onProgress && totalBytes > 0) {
+            onProgress({
+              percent: Math.min(100, Math.round(receivedBytes / totalBytes * 100)),
+              received: receivedBytes,
+              total: totalBytes
+            })
+          }
+        })
+
+        res.pipe(file)
+
+        file.on('finish', () => {
+          file.close(() => {
+            // 下载完成，重命名临时文件
+            try {
+              if (fs.existsSync(destPath)) fs.unlinkSync(destPath)
+              fs.renameSync(tmpPath, destPath)
+            } catch {
+              // Windows 上 rename 可能失败，回退为 copy + unlink
+              try {
+                fs.copyFileSync(tmpPath, destPath)
+                fs.unlinkSync(tmpPath)
+              } catch (e2) {
+                cleanup()
+                return reject(new Error('保存文件失败: ' + e2.message))
+              }
+            }
+            // 下载了新的默认库后，清除旧的 lookup 缓存以便重新加载
+            loadedPaths[kind] = ''
+            resolve({ ok: true, path: destPath, size: receivedBytes })
+          })
+        })
+
+        file.on('error', (e) => {
+          cleanup()
+          reject(e)
+        })
+      })
+
+      req.on('timeout', () => {
+        req.destroy(new Error('下载超时（30秒无响应）'))
+      })
+
+      req.on('error', (e) => {
+        file.close()
+        cleanup()
+        reject(e)
+      })
+    }
+
+    doRequest(url)
+  })
+}
+
+// 检查数据库更新
+export async function checkDbUpdate() {
+  try {
+    const r = await requestWithTimeout(GEOLITE_API_URL, {
+      method: 'GET',
+      timeout: 10000,
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'BookmarkManager-GeoIP-Updater'
+      }
+    })
+
+    if (r.status !== 200 || !r.body) {
+      return { hasUpdate: false, error: 'GitHub API 请求失败: HTTP ' + r.status }
+    }
+
+    const release = JSON.parse(r.body.toString())
+    const remoteDate = release.published_at || ''
+
+    const cityInfo = getDbInfo('city')
+    const asnInfo = getDbInfo('asn')
+
+    let hasUpdate = false
+    const needCity = !cityInfo.exists
+    const needAsn = !asnInfo.exists
+
+    if (cityInfo.exists && remoteDate) {
+      const localDate = new Date(cityInfo.modifiedAt).toISOString()
+      if (remoteDate > localDate) hasUpdate = true
+    }
+    if (asnInfo.exists && remoteDate) {
+      const localDate = new Date(asnInfo.modifiedAt).toISOString()
+      if (remoteDate > localDate) hasUpdate = true
+    }
+    if (needCity || needAsn) hasUpdate = true
+
+    return {
+      hasUpdate,
+      remoteDate,
+      remoteVersion: release.tag_name || '',
+      cityInfo,
+      asnInfo,
+      needCity,
+      needAsn
+    }
+  } catch (e) {
+    return { hasUpdate: false, error: e.message || '检查更新失败' }
+  }
+}
+
+// 删除默认库
+export function deleteDefaultDb(kind) {
+  const dbPath = getDefaultDbPath(kind)
+  try {
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+    loadedPaths[kind] = ''
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
 }
 
 function formatCity(c) {

@@ -19,6 +19,10 @@ const ALLOWED_CHANNELS = new Set([
   'preview:batch', 'preview:cacheSize', 'preview:enforceLimit',
   // GeoIP
   'geo:lookup', 'geo:ready',
+  // GeoIP mmdb 导入 / 下载 / 更新
+  'geoip:importMmdb', 'geoip:downloadDb', 'geoip:getDbInfo', 'geoip:checkUpdate', 'geoip:deleteDb',
+  // 分类环境
+  'env:list', 'env:create', 'env:switch', 'env:mirror', 'env:delete', 'env:rename', 'env:ensure',
   // WHOIS
   'whois:lookup', 'whois:ready',
   // 自动分类
@@ -35,8 +39,6 @@ const ALLOWED_CHANNELS = new Set([
   'settings:get', 'settings:save', 'proxy:detect',
   // 数据目录
   'dataDir:get', 'dataDir:pick', 'dataDir:set', 'dataDir:reset',
-  // GeoIP mmdb 导入
-  'geoip:importMmdb',
   // 凭证
   'cred:list', 'cred:add', 'cred:update', 'cred:delete', 'cred:reveal',
   // Cookie
@@ -62,6 +64,7 @@ const ALLOWED_CHANNELS = new Set([
 const ALLOWED_ON_CHANNELS = new Set([
   'bm:favicon-updated', 'validate:progress', 'preview:progress',
   'quickAdd', 'plugin:message',
+  'geoip:downloadProgress',
   'updater:state-changed', 'updater:update-available', 'updater:update-not-available',
   'updater:progress', 'updater:download-complete', 'updater:error',
   'updater:close-requested'

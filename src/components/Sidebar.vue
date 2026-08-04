@@ -30,7 +30,13 @@
     <!-- 分类树 -->
     <div class="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-slate-400 flex items-center justify-between">
       <span>分类</span>
-      <button @click="$emit('manageCategories')" class="hover:text-accent text-xs" title="管理分类">⚙</button>
+      <div class="flex items-center gap-1.5">
+        <button @click="showEnvManager = true" class="hover:text-accent text-[10px] normal-case tracking-normal flex items-center gap-0.5 max-w-[80px]" title="分类环境管理">
+          <span class="truncate">{{ currentEnvName || '默认环境' }}</span>
+          <span>🔄</span>
+        </button>
+        <button @click="$emit('manageCategories')" class="hover:text-accent text-xs" title="管理分类">⚙</button>
+      </div>
     </div>
     <nav class="px-2 space-y-0.5 flex-1 overflow-y-auto pb-2">
       <template v-for="node in cats.tree" :key="node.id">
@@ -117,6 +123,9 @@
         <button @click="deleteCategory(contextMenu.node); closeContextMenu()" class="w-full text-left px-3 py-1.5 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500">🗑️ 删除</button>
       </div>
     </teleport>
+
+    <!-- 分类环境管理 -->
+    <CategoryEnvManager v-model="showEnvManager" @switched="onEnvSwitched" />
   </aside>
   </div>
 </template>
@@ -126,6 +135,7 @@ import { ref, computed, defineComponent, h, onMounted, onUnmounted } from 'vue'
 import { useBookmarksStore } from '../stores/bookmarks.js'
 import { useCategoriesStore } from '../stores/categories.js'
 import { useSettingsStore } from '../stores/settings.js'
+import CategoryEnvManager from './CategoryEnvManager.vue'
 
 const emit = defineEmits(['manageCategories', 'newFolder', 'openCredentials', 'openCookies', 'openSnapshots', 'openPlugins', 'newSmartFolder', 'openRecycle', 'closeRecycle', 'openArchive', 'closeArchive'])
 
@@ -134,9 +144,32 @@ const cats = useCategoriesStore()
 const settingsStore = useSettingsStore()
 const contextMenu = ref({ visible: false, x: 0, y: 0, node: null })
 const renameDialog = ref({ visible: false, node: null, name: '' })
+const showEnvManager = ref(false)
+const currentEnvName = ref('默认环境')
 
 // 智能文件夹
 const smartFolders = computed(() => settingsStore.settings.smartFolders || [])
+
+// 分类环境
+async function loadEnvName() {
+  try {
+    const r = await window.api.invoke('env:list')
+    const current = (r.environments || []).find(e => e.id === r.currentEnvId)
+    currentEnvName.value = current?.name || '默认环境'
+  } catch { /* ignore */ }
+}
+
+async function onEnvSwitched() {
+  await cats.load()
+  await bm.load()
+  bm.activeCategory = 'all'
+  await loadEnvName()
+  window.$toast('环境已切换，数据已刷新', 'success')
+}
+
+onMounted(() => {
+  loadEnvName()
+})
 
 function getSmartFolderCount(folderId) {
   return bm.smartFolderResults(folderId).length
