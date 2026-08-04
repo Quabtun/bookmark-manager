@@ -31,6 +31,7 @@ import {
 } from './cookies.js'
 import { registerUpdaterIpc } from './updater.js'
 import { listEnvironments, createEnvironment, switchEnvironment, mirrorEnvironment, deleteEnvironment, renameEnvironment, ensureDefaultEnvironment } from './category-env.js'
+import { captureScreenshot, getScreenshotPath, getScreenshotFileName, deleteScreenshot, captureBatch } from './screenshot.js'
 
 let mainWindowRef = null
 export function getMainWindow() { return mainWindowRef }
@@ -124,7 +125,8 @@ export function registerIpc() {
     saveBookmarks(list)
     // 后台抓图标（原子更新，不重新加载整个列表）
     const addedId = bm.id
-    fetchFavicon(bm.url).then((fname) => {
+    const addedUrl = bm.url
+    fetchFavicon(addedUrl).then((fname) => {
       if (fname) {
         const arr = loadBookmarks()
         const idx = arr.findIndex((x) => x.id === addedId)
@@ -132,6 +134,17 @@ export function registerIpc() {
         send('bm:favicon-updated', { id: addedId, favicon: fname })
       }
     }).catch(() => {})
+    // 后台抓网页截图（延迟 2 秒，避免与 favicon 抢占资源）
+    setTimeout(() => {
+      captureScreenshot(addedUrl).then((result) => {
+        if (result.ok) {
+          const arr = loadBookmarks()
+          const idx = arr.findIndex((x) => x.id === addedId)
+          if (idx !== -1) { arr[idx].screenshot = result.file; saveBookmarks(arr) }
+          send('bm:screenshot-updated', { id: addedId, screenshot: result.file })
+        }
+      }).catch(() => {})
+    }, 2000)
     return bm
   })
 
@@ -162,6 +175,14 @@ export function registerIpc() {
           const arr = loadBookmarks()
           const i = arr.findIndex((x) => x.id === id)
           if (i !== -1) { arr[i].favicon = fname; saveBookmarks(arr); send('bm:favicon-updated', { id, favicon: fname }) }
+        }
+      }).catch(() => {})
+      // 重新抓截图
+      captureScreenshot(patch.url).then((result) => {
+        if (result.ok) {
+          const arr = loadBookmarks()
+          const i = arr.findIndex((x) => x.id === id)
+          if (i !== -1) { arr[i].screenshot = result.file; saveBookmarks(arr); send('bm:screenshot-updated', { id, screenshot: result.file }) }
         }
       }).catch(() => {})
     }
@@ -300,6 +321,36 @@ export function registerIpc() {
     return { bytes: getImagesSize(), mb: +(getImagesSize() / 1024 / 1024).toFixed(2) }
   })
   safeHandle('preview:enforceLimit', async () => enforceCacheLimit())
+
+  // ---- 网页截图 ----
+  safeHandle('screenshot:capture', async (_e, url, options) => {
+    const result = await captureScreenshot(url, options)
+    if (result.ok) {
+      // 更新书签的 screenshot 字段
+      const arr = loadBookmarks()
+      const idx = arr.findIndex((x) => x.url === url)
+      if (idx !== -1) {
+        arr[idx].screenshot = result.file
+        saveBookmarks(arr)
+        send('bm:screenshot-updated', { id: arr[idx].id, screenshot: result.file })
+      }
+    }
+    return result
+  })
+  safeHandle('screenshot:get', async (_e, url) => {
+    const p = getScreenshotPath(url)
+    return p ? readAsDataUrl(p) : null
+  })
+  safeHandle('screenshot:batch', async (_e, urls) => {
+    return captureBatch(urls, {
+      limit: 2,
+      onProgress: (done, total, currentUrl) => send('screenshot:progress', { done, total, currentUrl })
+    })
+  })
+  safeHandle('screenshot:delete', async (_e, url) => {
+    deleteScreenshot(url)
+    return { ok: true }
+  })
 
   // ---- GeoIP ----
   safeHandle('geo:lookup', async (_e, url) => lookupGeo(url))

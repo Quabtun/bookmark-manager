@@ -19,11 +19,21 @@
     <span :class="['absolute top-3 right-3 w-2.5 h-2.5 rounded-full ring-2 ring-white/70 dark:ring-slate-800', statusColor]"
           :title="statusText"></span>
 
+    <!-- 网页截图缩略图（有截图时显示为卡片顶部 banner） -->
+    <div v-if="screenshotUrl" class="relative -mx-3.5 -mt-3.5 mb-3 h-32 overflow-hidden rounded-t-2xl bg-slate-100 dark:bg-slate-800">
+      <img :src="screenshotUrl" class="w-full h-full object-cover object-top" @error="onScreenshotError" loading="lazy" />
+      <!-- 截图加载中遮罩 -->
+      <div v-if="capturing" class="absolute inset-0 flex items-center justify-center bg-slate-200/60 dark:bg-slate-900/60">
+        <span class="text-xs text-slate-500 animate-pulse">截图生成中…</span>
+      </div>
+    </div>
+
     <div class="flex items-start gap-3">
-      <!-- 图标 -->
-      <div class="w-10 h-10 rounded-xl bg-white dark:bg-slate-700 flex items-center justify-center shrink-0 overflow-hidden shadow-sm ring-1 ring-black/5">
-        <img v-if="faviconUrl" :src="faviconUrl" class="w-6 h-6 object-contain" @error="onImgError" />
-        <span v-else class="text-lg font-semibold"
+      <!-- 图标（无截图时作为主图标，有截图时缩小为辅助标识） -->
+      <div :class="['rounded-xl bg-white dark:bg-slate-700 flex items-center justify-center shrink-0 overflow-hidden shadow-sm ring-1 ring-black/5',
+                     screenshotUrl ? 'w-7 h-7' : 'w-10 h-10']">
+        <img v-if="faviconUrl" :src="faviconUrl" :class="screenshotUrl ? 'w-4 h-4 object-contain' : 'w-6 h-6 object-contain'" @error="onImgError" />
+        <span v-else :class="screenshotUrl ? 'text-xs font-semibold' : 'text-lg font-semibold'"
               :style="{ color: letterColor }">{{ letter }}</span>
       </div>
 
@@ -32,6 +42,10 @@
         <div class="text-xs text-slate-400 truncate" :title="bm.url">{{ host }}</div>
         <div v-if="bm.description" class="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">{{ bm.description }}</div>
       </div>
+
+      <!-- 截图操作按钮 -->
+      <button v-if="!screenshotUrl" @click.stop="captureShot" class="shrink-0 w-7 h-7 rounded-lg bg-white/60 dark:bg-slate-700/60 hover:bg-accent hover:text-white text-xs shadow-sm transition" title="生成网页截图">📷</button>
+      <button v-else @click.stop="recaptureShot" class="shrink-0 w-7 h-7 rounded-lg bg-white/60 dark:bg-slate-700/60 hover:bg-accent hover:text-white text-xs shadow-sm transition" title="重新截图">🔄</button>
     </div>
 
     <!-- 底部标签 -->
@@ -89,6 +103,8 @@ const ui = useUiStore()
 
 const faviconUrl = ref(null)
 const imgError = ref(false)
+const screenshotUrl = ref(null)
+const capturing = ref(false)
 
 const cat = computed(() => cats.byId[props.bm.categoryId])
 const host = computed(() => { try { return new URL(props.bm.url).hostname } catch { return props.bm.url } })
@@ -124,6 +140,39 @@ async function loadFavicon() {
   }
 }
 watch(() => props.bm.favicon, loadFavicon, { immediate: true })
+
+// 加载网页截图
+async function loadScreenshot() {
+  if (props.bm.screenshot) {
+    screenshotUrl.value = await ui.getScreenshot(props.bm.url)
+  } else {
+    screenshotUrl.value = null
+  }
+}
+watch(() => props.bm.screenshot, loadScreenshot, { immediate: true })
+
+// 手动触发截图
+async function captureShot() {
+  capturing.value = true
+  try {
+    const result = await ui.captureScreenshot(props.bm.url)
+    if (result.ok) {
+      bmStore.update(props.bm.id, { screenshot: result.file }).catch(() => {})
+      await loadScreenshot()
+    }
+  } catch { /* ignore */ }
+  capturing.value = false
+}
+
+// 重新截图（先清除缓存再重新捕获）
+async function recaptureShot() {
+  ui.clearScreenshot(props.bm.url)
+  await captureShot()
+}
+
+function onScreenshotError() {
+  screenshotUrl.value = null
+}
 
 // 自动检测服务器位置（不直接修改 props，通过 store 更新）
 async function autoGeoLookup() {
@@ -275,8 +324,23 @@ function onFaviconUpdated(e) {
     loadFavicon()
   }
 }
-onMounted(() => window.addEventListener('favicon-updated', onFaviconUpdated))
-onUnmounted(() => window.removeEventListener('favicon-updated', onFaviconUpdated))
+onMounted(() => {
+  window.addEventListener('favicon-updated', onFaviconUpdated)
+  window.addEventListener('screenshot-updated', onScreenshotUpdated)
+})
+onUnmounted(() => {
+  window.removeEventListener('favicon-updated', onFaviconUpdated)
+  window.removeEventListener('screenshot-updated', onScreenshotUpdated)
+})
+
+// 监听截图更新事件
+function onScreenshotUpdated(e) {
+  if (e.detail.id === props.bm.id) {
+    bmStore.update(props.bm.id, { screenshot: e.detail.screenshot }).catch(() => {})
+    ui.clearScreenshot(props.bm.url)
+    loadScreenshot()
+  }
+}
 </script>
 
 <style scoped>

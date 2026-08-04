@@ -86,6 +86,11 @@
         <span>🗑️</span><span>回收站</span>
         <span v-if="bm.recycledCount > 0" class="ml-auto text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full">{{ bm.recycledCount }}</span>
       </button>
+      <router-link to="/categorize" custom v-slot="{ navigate }">
+        <button @click="navigate" class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-200/60 dark:hover:bg-slate-700/50">
+          <span>🗂️</span><span>分类与导入导出</span>
+        </button>
+      </router-link>
       <router-link to="/settings" custom v-slot="{ navigate }">
         <button @click="navigate" class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-200/60 dark:hover:bg-slate-700/50">
           <span>⚙️</span><span>设置</span>

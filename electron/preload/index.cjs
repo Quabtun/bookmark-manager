@@ -17,6 +17,8 @@ const ALLOWED_CHANNELS = new Set([
   // 预览
   'preview:generate', 'preview:get', 'preview:image',
   'preview:batch', 'preview:cacheSize', 'preview:enforceLimit',
+  // 网页截图
+  'screenshot:capture', 'screenshot:get', 'screenshot:batch', 'screenshot:delete',
   // GeoIP
   'geo:lookup', 'geo:ready',
   // GeoIP mmdb 导入 / 下载 / 更新
@@ -62,7 +64,8 @@ const ALLOWED_CHANNELS = new Set([
 
 // 允许监听的事件通道（主进程 → 渲染进程）
 const ALLOWED_ON_CHANNELS = new Set([
-  'bm:favicon-updated', 'validate:progress', 'preview:progress',
+  'bm:favicon-updated', 'bm:screenshot-updated', 'validate:progress', 'preview:progress',
+  'screenshot:progress',
   'quickAdd', 'plugin:message',
   'geoip:downloadProgress',
   'updater:state-changed', 'updater:update-available', 'updater:update-not-available',
