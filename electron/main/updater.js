@@ -8,6 +8,8 @@ import {
   compareVersions, extractFileNameFromUrl, isValidDownloadUrl,
   pickBestAsset, calcProgress
 } from './updater-logic.js'
+import { findDeltaAsset, isDeltaWorthIt } from './delta-logic.js'
+import { performDeltaUpdate } from './delta-updater.js'
 
 // ============================================================
 // GitHub 仓库配置
@@ -25,7 +27,8 @@ const STAGING_DIR = path.join(app.getPath('temp'), 'bookmark-manager-update')
 // ============================================================
 // 更新状态机
 // idle → checking → (available | not-available | error)
-// available → downloading → downloaded → installing
+// available → delta-downloading → delta-applying → downloaded → installing
+//          → (fallback) downloading → downloaded → installing
 // ============================================================
 const STATE = {
   IDLE: 'idle',
@@ -33,6 +36,8 @@ const STATE = {
   AVAILABLE: 'available',
   NOT_AVAILABLE: 'not-available',
   DOWNLOADING: 'downloading',
+  DELTA_DOWNLOADING: 'delta-downloading',
+  DELTA_APPLYING: 'delta-applying',
   DOWNLOADED: 'downloaded',
   INSTALLING: 'installing',
   ERROR: 'error'
@@ -241,12 +246,19 @@ async function checkGithubReleases() {
 
     const asset = pickBestAsset(release.assets)
 
+    // 检测差分资产：查找 update-{oldVer}-{newVer}.delta
+    const deltaAsset = findDeltaAsset(release.assets, currentVersion, latestVersion)
+    const useDelta = !!(deltaAsset && isDeltaWorthIt(deltaAsset.size, asset.size) && app.isPackaged)
+
     updateInfo = {
       version: latestVersion,
       releaseDate: release.published_at || '',
       releaseNotes: release.body || '',
       downloadUrl: asset.url,
       downloadSize: asset.size,
+      deltaUrl: deltaAsset ? deltaAsset.url : null,
+      deltaSize: deltaAsset ? deltaAsset.size : 0,
+      useDelta,
       htmlUrl: release.html_url || GITHUB_RELEASES_URL,
       mode: 'github-api'
     }
@@ -431,7 +443,10 @@ async function downloadWithRetryCustom() {
 // 公共 API
 // ============================================================
 export async function checkForUpdates(silent = false) {
-  if (currentState === STATE.CHECKING || currentState === STATE.DOWNLOADING) {
+  if (currentState === STATE.CHECKING ||
+      currentState === STATE.DOWNLOADING ||
+      currentState === STATE.DELTA_DOWNLOADING ||
+      currentState === STATE.DELTA_APPLYING) {
     return getState()
   }
   lastError = ''  // [FIX] 清除旧错误信息
@@ -490,9 +505,74 @@ async function downloadWithRetryAuto() {
   }
 }
 
+// ============================================================
+// 差分更新尝试 —— 下载 delta → 读取本地 exe → 应用差分 → 校验
+// 成功返回 { ok, mode: 'delta', size }
+// 失败返回 { ok: false, error }，调用方应回退完整下载
+// ============================================================
+async function tryDeltaUpdate() {
+  const sessionId = downloadSessionId
+  const deltaStartTime = Date.now()
+  const fallbackName = `BookmarkManager-${updateInfo.version}-portable.exe`
+
+  setState(STATE.DELTA_DOWNLOADING)
+
+  try {
+    const result = await performDeltaUpdate({
+      deltaUrl: updateInfo.deltaUrl,
+      deltaSize: updateInfo.deltaSize,
+      exePath: process.execPath,
+      stagingDir: STAGING_DIR,
+      destFileName: fallbackName,
+      onDownloadProgress: ({ receivedBytes, totalBytes }) => {
+        if (sessionId !== downloadSessionId) return
+        notifyProgress(calcProgress(receivedBytes, totalBytes, Date.now() - deltaStartTime))
+      },
+      onApplyProgress: ({ phase, message }) => {
+        if (sessionId !== downloadSessionId) return
+        setState(STATE.DELTA_APPLYING, { applyPhase: phase, applyMessage: message })
+      },
+      onRequest: (req) => {
+        if (sessionId === downloadSessionId) {
+          customDownloadReq = req
+        }
+      }
+    })
+
+    if (result.ok && sessionId === downloadSessionId) {
+      downloadedFilePath = result.path
+      return { ok: true, mode: 'delta', size: result.size }
+    }
+
+    return { ok: false, error: result.error || '差分更新未完成' }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
+// ============================================================
+// 下载完成后聚焦/重新打开更新窗口
+// ============================================================
+async function focusUpdaterWindow() {
+  try {
+    const { getUpdaterWindow, createUpdaterWindow } = await import('./updater-window.js')
+    const win = getUpdaterWindow()
+    if (!win || win.isDestroyed()) {
+      createUpdaterWindow(false)
+    } else {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+  } catch { /* ignore */ }
+}
+
 export async function startDownload() {
   if (!updateInfo) return { error: '没有可用的更新' }
-  if (currentState === STATE.DOWNLOADING) return { error: '正在下载中…' }
+  if (currentState === STATE.DOWNLOADING ||
+      currentState === STATE.DELTA_DOWNLOADING ||
+      currentState === STATE.DELTA_APPLYING) {
+    return { error: '正在下载中…' }
+  }
 
   retryCount = 0
   isCancelling = false         // [FIX] 重置取消标志
@@ -507,25 +587,39 @@ export async function startDownload() {
     return downloadWithRetryAuto()
   }
 
-  // portable / GitHub API 模式：应用内下载到暂存文件夹
+  // 差分更新路径（仅 portable 打包模式）
+  if (updateInfo.useDelta && updateInfo.deltaUrl && app.isPackaged) {
+    const deltaResult = await tryDeltaUpdate()
+
+    if (deltaResult.ok) {
+      notifyProgress({ percent: 100, transferred: 0, total: 0, eta: 0 })
+      setState(STATE.DOWNLOADED)
+      await focusUpdaterWindow()
+      return deltaResult
+    }
+
+    // 差分失败，检查是否为用户取消
+    if (isCancelling) {
+      isCancelling = false
+      return { ok: false, cancelled: true }
+    }
+
+    // 回退到完整下载
+    console.warn('[updater] 差分更新失败，回退到完整下载:', deltaResult.error)
+    lastError = ''
+    retryCount = 0  // 重置重试计数给完整下载用
+    downloadSessionId++  // 新会话，避免差分阶段的回调干扰
+    downloadProgress = null
+  }
+
+  // 完整下载路径（portable / GitHub API 模式）
   setState(STATE.DOWNLOADING)
   const result = await downloadWithRetryCustom()
 
   if (result.ok) {
     notifyProgress({ percent: 100, transferred: 0, total: 0, eta: 0 })
     setState(STATE.DOWNLOADED)
-
-    // 下载完成后：如果更新窗口已关闭，自动重新打开并聚焦
-    try {
-      const { getUpdaterWindow, createUpdaterWindow } = await import('./updater-window.js')
-      const win = getUpdaterWindow()
-      if (!win || win.isDestroyed()) {
-        createUpdaterWindow(false)
-      } else {
-        if (win.isMinimized()) win.restore()
-        win.focus()
-      }
-    } catch { /* ignore */ }
+    await focusUpdaterWindow()
   }
 
   return result
@@ -580,11 +674,11 @@ export async function installUpdate() {
 }
 
 export function cancelDownload() {
-  if (currentState === STATE.DOWNLOADING) {
+  if (currentState === STATE.DOWNLOADING || currentState === STATE.DELTA_DOWNLOADING) {
     // [FIX] 设置取消标志，阻止重试逻辑覆盖状态
     isCancelling = true
 
-    // 取消自定义下载请求
+    // 取消自定义下载请求（完整下载或差分下载共用）
     if (customDownloadReq) {
       try { customDownloadReq.destroy() } catch { /* ignore */ }
       customDownloadReq = null
@@ -595,7 +689,7 @@ export function cancelDownload() {
       if (fs.existsSync(STAGING_DIR)) {
         const files = fs.readdirSync(STAGING_DIR)
         for (const f of files) {
-          if (f.endsWith('.tmp')) {
+          if (f.endsWith('.tmp') || f.endsWith('.delta')) {
             try { fs.unlinkSync(path.join(STAGING_DIR, f)) } catch { /* ignore */ }
           }
         }
@@ -607,6 +701,13 @@ export function cancelDownload() {
 
     setState(STATE.IDLE)
     return { ok: true, message: '下载已取消' }
+  }
+  // 差分应用阶段：CPU 密集无法中断，标记取消后丢弃结果
+  if (currentState === STATE.DELTA_APPLYING) {
+    isCancelling = true
+    downloadSessionId++
+    setState(STATE.IDLE)
+    return { ok: true, message: '已取消（差分应用阶段无法中断，结果将被丢弃）' }
   }
   setState(STATE.IDLE)
   return { ok: true }
@@ -627,7 +728,9 @@ export function getState() {
 }
 
 export function isDownloading() {
-  return currentState === STATE.DOWNLOADING
+  return currentState === STATE.DOWNLOADING ||
+         currentState === STATE.DELTA_DOWNLOADING ||
+         currentState === STATE.DELTA_APPLYING
 }
 
 export function isDownloaded() {

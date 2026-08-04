@@ -224,6 +224,8 @@ function getUpdaterHTML() {
   .status-msg.not-available { color: var(--success); }
   .status-msg.error { color: var(--error); }
   .status-msg.installing { color: var(--accent); }
+  .status-msg.delta-downloading { color: var(--accent); }
+  .status-msg.delta-applying { color: var(--accent); }
 
   .spinner {
     width: 18px; height: 18px;
@@ -612,10 +614,13 @@ function getUpdaterHTML() {
       }
       const dateStr = info && info.releaseDate ? info.releaseDate.slice(0, 10) : ''
       const modeHint = state.isPortable ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">将下载到暂存文件夹，安装后自动清理</div>' : ''
+      const deltaHint = info && info.useDelta && info.deltaSize
+        ? '<div style="font-size:11px;color:var(--success);margin-top:4px">⚡ 支持差分更新 · 仅需下载 ' + formatBytes(info.deltaSize) + '（完整包 ' + formatBytes(info.downloadSize) + '）</div>'
+        : ''
       statusArea.innerHTML =
         '<div class="status-msg available">✨ 发现新版本' + (info && info.version ? ' v' + info.version : '') + '</div>' +
         (dateStr ? '<div style="font-size:12px;color:var(--text-muted)">发布日期：' + dateStr + '</div>' : '') +
-        notesHtml + modeHint
+        notesHtml + modeHint + deltaHint
       const dlBtn = '<button class="btn btn-primary" id="btnDownload">📥 下载更新</button>'
       actions.innerHTML = dlBtn + '<button class="btn btn-ghost" id="btnCheck">🔍 重新检查</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
     } else if (s === 'downloading') {
@@ -638,6 +643,41 @@ function getUpdaterHTML() {
           '</div>' +
         '</div>'
       actions.innerHTML = '<button class="btn btn-ghost" id="btnCancel">✕ 取消下载</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
+    } else if (s === 'delta-downloading') {
+      const pct = prog ? prog.percent : 0
+      const transferred = prog ? formatBytes(prog.transferred) : '0 B'
+      const total = prog ? formatBytes(prog.total) : '…'
+      const speed = prog && prog.bytesPerSecond ? formatBytes(prog.bytesPerSecond) + '/s' : '…'
+      const eta = prog ? formatETA(prog.eta || 0) : '计算中…'
+      const deltaSize = info && info.deltaSize ? formatBytes(info.deltaSize) : ''
+      const fullSize = info && info.downloadSize ? formatBytes(info.downloadSize) : ''
+      const savingsHint = deltaSize && fullSize
+        ? '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📦 差分更新 · 仅下载变化部分（' + deltaSize + ' / 完整包 ' + fullSize + '）</div>'
+        : ''
+      statusArea.innerHTML =
+        '<div class="status-msg delta-downloading"><div class="spinner"></div>正在下载差分更新包…</div>' +
+        savingsHint +
+        '<div class="progress-area">' +
+          '<div class="progress-header">' +
+            '<span class="progress-percent">' + pct + '%</span>' +
+            '<span>' + transferred + ' / ' + total + '</span>' +
+          '</div>' +
+          '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
+          '<div class="progress-meta">' +
+            '<span>速度：' + speed + '</span>' +
+            '<span class="progress-eta">⏳ 剩余 ' + eta + '</span>' +
+          '</div>' +
+        '</div>'
+      actions.innerHTML = '<button class="btn btn-ghost" id="btnCancel">✕ 取消下载</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
+    } else if (s === 'delta-applying') {
+      const applyMsg = state.applyMessage || '正在应用差分更新…'
+      statusArea.innerHTML =
+        '<div class="status-msg delta-applying"><div class="spinner"></div>' + escapeHtml(applyMsg) + '</div>' +
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.6">' +
+          '正在用差分数据重建新版本文件，此过程需要读取本地程序文件。<br/>' +
+          '完成后会自动校验 SHA256 完整性。' +
+        '</div>'
+      actions.innerHTML = '<button class="btn btn-ghost" disabled>⏳ 应用中…</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
     } else if (s === 'downloaded') {
       statusArea.innerHTML = '<div class="status-msg downloaded">✅ 更新已下载完成，可以安装了</div>'
       actions.innerHTML = '<button class="btn btn-success" id="btnInstall">🚀 立即安装并重启</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
