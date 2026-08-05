@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkForUpdates, startDownload, installUpdate, cancelDownload, getState, isDownloading } from './updater.js'
+import { checkForUpdates, startDownload, installUpdate, cancelDownload, getState, isDownloading, isInstalling } from './updater.js'
 
 let updaterWindow = null
 
@@ -227,6 +227,67 @@ function getUpdaterHTML() {
   .status-msg.delta-downloading { color: var(--accent); }
   .status-msg.delta-applying { color: var(--accent); }
 
+  /* ---- 安装进度 ---- */
+  .install-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .install-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .install-step .step-icon {
+    width: 18px; height: 18px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .install-step.active {
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .install-step.active .step-icon {
+    animation: spin 0.7s linear infinite;
+  }
+  .install-step.done {
+    color: var(--success);
+  }
+  .install-step.error {
+    color: var(--error);
+  }
+  .install-bar {
+    width: 100%; height: 8px;
+    background: var(--code-bg);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .install-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #8eb4ff);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    width: 0%;
+  }
+  .install-bar-fill::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    animation: shimmer 1.5s infinite;
+  }
+  .install-percent {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--accent);
+    font-family: 'Consolas', monospace;
+    text-align: center;
+  }
+
   .spinner {
     width: 18px; height: 18px;
     border: 2.5px solid var(--accent-light);
@@ -420,7 +481,7 @@ function getUpdaterHTML() {
 </head>
 <body>
   <div class="titlebar">
-    <div class="titlebar-title">🔄 检查更新 <span style="font-size:10px;color:var(--text-muted);font-weight:400">v1.4.1-test</span></div>
+    <div class="titlebar-title">🔄 检查更新 <span style="font-size:10px;color:var(--text-muted);font-weight:400">v1.4.2</span></div>
     <button class="titlebar-close" id="btnClose">×</button>
   </div>
 
@@ -462,6 +523,7 @@ function getUpdaterHTML() {
   const $ = (id) => document.getElementById(id)
   let state = { state: 'idle', updateInfo: null, downloadProgress: null, error: '', currentVersion: '', canAutoUpdate: false, isPortable: false }
   let vInfo = null
+  let installProgress = null  // 安装进度数据 { step, message, percent }
 
   // ---- 工具函数 ----
 
@@ -682,13 +744,84 @@ function getUpdaterHTML() {
       statusArea.innerHTML = '<div class="status-msg downloaded">✅ 更新已下载完成，可以安装了</div>'
       actions.innerHTML = '<button class="btn btn-success" id="btnInstall">🚀 立即安装并重启</button><button class="btn btn-ghost" id="btnReleases" style="margin-left:auto">📂 发布页</button>'
     } else if (s === 'installing') {
-      statusArea.innerHTML =
-        '<div class="status-msg installing"><div class="spinner"></div>正在安装更新，应用即将重启…</div>' +
-        '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;line-height:1.6">' +
-          '安装脚本已启动，请勿关闭此窗口。<br/>' +
-          '应用退出后将自动完成安装并启动新版本。' +
-        '</div>'
-      actions.innerHTML = '<button class="btn btn-ghost" disabled>安装中…</button>'
+      // 安装进度由 installProgress 变量驱动
+      var ip = installProgress || {}
+      var step = ip.step || 'preparing'
+      var msg = ip.message || '正在准备安装…'
+      var pct = ip.percent || 0
+
+      // 步骤状态计算
+      var steps = [
+        { key: 'preparing', label: '准备安装环境', icon: '⚙' },
+        { key: 'renaming', label: '重命名当前版本', icon: '📦' },
+        { key: 'copying', label: '安装新版本文件', icon: '📥' },
+        { key: 'launching', label: '启动新版本', icon: '🚀' },
+        { key: 'done', label: '更新完成', icon: '✅' }
+      ]
+      var stepOrder = ['preparing', 'renaming', 'copying', 'launching', 'done']
+      var currentIdx = stepOrder.indexOf(step)
+      if (currentIdx === -1) currentIdx = 0
+
+      var stepsHtml = ''
+      for (var i = 0; i < steps.length; i++) {
+        var st = steps[i]
+        var cls = 'install-step'
+        var iconHtml = st.icon
+        if (i < currentIdx) {
+          cls += ' done'
+          iconHtml = '✓'
+        } else if (i === currentIdx) {
+          if (step === 'done') {
+            cls += ' done'
+            iconHtml = '✓'
+          } else if (step === 'error') {
+            cls += ' error'
+            iconHtml = '✕'
+          } else {
+            cls += ' active'
+            iconHtml = '<div class="spinner" style="width:14px;height:14px;border-width:2px"></div>'
+          }
+        }
+        stepsHtml += '<div class="' + cls + '"><span class="step-icon">' + iconHtml + '</span>' + escapeHtml(st.label) + '</div>'
+      }
+
+      // 错误状态
+      if (step === 'error') {
+        statusArea.innerHTML =
+          '<div class="status-msg error">⚠️ 安装失败</div>' +
+          '<div style="font-size:12px;color:var(--error);margin-top:4px;line-height:1.6">' +
+            escapeHtml(msg) +
+          '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:8px">' +
+            '主程序已恢复，请关闭此窗口后重试。' +
+          '</div>'
+        actions.innerHTML = '<button class="btn btn-primary" id="btnCheck">🔍 重新检查更新</button>'
+      } else if (step === 'done') {
+        statusArea.innerHTML =
+          '<div class="status-msg downloaded">✅ 更新安装完成！</div>' +
+          '<div class="install-progress">' + stepsHtml + '</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-top:8px;line-height:1.6">' +
+            '新版本已启动，此窗口即将关闭。' +
+          '</div>'
+        actions.innerHTML = '<button class="btn btn-ghost" disabled>完成中…</button>'
+      } else {
+        // 安装中
+        var barHtml = ''
+        if (step === 'copying' && pct > 0) {
+          barHtml =
+            '<div class="install-bar" style="position:relative"><div class="install-bar-fill" style="width:' + pct + '%"></div></div>' +
+            '<div class="install-percent">' + pct + '%</div>'
+        }
+
+        statusArea.innerHTML =
+          '<div class="status-msg installing"><div class="spinner"></div>' + escapeHtml(msg) + '</div>' +
+          '<div class="install-progress">' + stepsHtml + barHtml + '</div>' +
+          '<div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.6">' +
+            '正在安装更新，请勿关闭此窗口。<br/>' +
+            '安装完成后将自动启动新版本。' +
+          '</div>'
+        actions.innerHTML = '<button class="btn btn-ghost" disabled>安装中…</button>'
+      }
     } else if (s === 'error') {
       // 检测是否是重试中的错误
       const isRetrying = state.error && state.error.indexOf('自动重试') !== -1
@@ -749,6 +882,16 @@ function getUpdaterHTML() {
   window.updater.on('updater:progress', (prog) => {
     state.downloadProgress = prog
     state.state = 'downloading'
+    render()
+  })
+
+  // 安装进度监听
+  window.updater.on('updater:install-progress', (prog) => {
+    installProgress = prog
+    // 如果状态还不是 installing，强制切换
+    if (state.state !== 'installing' && state.state !== 'error') {
+      state.state = 'installing'
+    }
     render()
   })
 
@@ -837,8 +980,21 @@ export function createUpdaterWindow(autoCheck = true) {
     updaterWindow.focus()
   })
 
-  // 下载中时阻止直接关闭，需要用户确认
+  // 下载中或安装中时阻止直接关闭，需要用户确认
   updaterWindow.on('close', (e) => {
+    // 安装中：禁止关闭，必须等安装完成
+    if (isInstalling() && !updaterWindow._forceClose) {
+      e.preventDefault()
+      dialog.showMessageBoxSync(updaterWindow, {
+        type: 'warning',
+        title: '安装进行中',
+        message: '正在安装更新，无法关闭窗口。',
+        detail: '安装完成后窗口会自动关闭，请稍候。',
+        buttons: ['确定'],
+        defaultId: 0
+      })
+      return
+    }
     if (isDownloading() && !updaterWindow._forceClose) {
       e.preventDefault()
       const choice = dialog.showMessageBoxSync(updaterWindow, {

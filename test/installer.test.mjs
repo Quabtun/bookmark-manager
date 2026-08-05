@@ -1,96 +1,161 @@
 // installer.test.mjs — 安装层单元测试
-// 验证 PowerShell 安装脚本生成逻辑,覆盖中文路径、特殊字符等边界情况
+// 验证进程内安装逻辑：重命名+复制策略、清理函数、参数校验
 
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildInstallScript } from '../electron/main/installer.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { cleanupOldExe, performInstallInProcess, launchNewVersion } from '../electron/main/installer.js'
 
-describe('buildInstallScript', () => {
-  const baseOpts = {
-    pid: 12345,
-    downloadedFilePath: 'C:\\Temp\\update\\BookmarkManager-1.3.0-portable.exe',
-    currentExePath: 'C:\\Users\\test\\AppData\\Local\\BookmarkManager.exe',
-    stagingDir: 'C:\\Temp\\update'
-  }
+// 辅助：创建临时目录
+function makeTempDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'installer-test-'))
+}
 
-  test('包含进程 PID', () => {
-    const script = buildInstallScript(baseOpts)
-    assert.ok(script.includes('12345'), '脚本应包含 PID')
-    assert.ok(script.includes('$TargetPid = 12345'), '应设置 $TargetPid 变量')
+// 辅助：创建临时文件
+function makeTempFile(dir, name, content = 'test content') {
+  const p = path.join(dir, name)
+  fs.writeFileSync(p, content)
+  return p
+}
+
+describe('cleanupOldExe', () => {
+  test('清理存在的 .old 文件', () => {
+    const dir = makeTempDir()
+    const exePath = path.join(dir, 'app.exe')
+    const oldPath = exePath + '.old'
+    fs.writeFileSync(exePath, 'exe')
+    fs.writeFileSync(oldPath, 'old exe')
+
+    cleanupOldExe(exePath)
+
+    assert.ok(!fs.existsSync(oldPath), '.old 文件应被删除')
+    assert.ok(fs.existsSync(exePath), '原 exe 不应被影响')
+
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  test('包含文件复制命令', () => {
-    const script = buildInstallScript(baseOpts)
-    assert.ok(script.includes('Copy-Item'), '应使用 Copy-Item 复制文件')
-    assert.ok(script.includes('-LiteralPath'), '应使用 -LiteralPath 支持中文路径')
-    assert.ok(script.includes(baseOpts.downloadedFilePath), '应包含下载文件路径')
-    assert.ok(script.includes(baseOpts.currentExePath), '应包含目标 exe 路径')
+  test('.old 不存在时静默成功', () => {
+    const dir = makeTempDir()
+    const exePath = path.join(dir, 'app.exe')
+    fs.writeFileSync(exePath, 'exe')
+
+    // 不应抛出异常
+    assert.doesNotThrow(() => cleanupOldExe(exePath))
+
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('performInstallInProcess', () => {
+  test('参数校验：缺少 downloadedFilePath 抛出错误', async () => {
+    await assert.rejects(
+      () => performInstallInProcess({ downloadedFilePath: '', currentExePath: 'x', onProgress: () => {} }),
+      /下载的更新文件不存在/
+    )
   })
 
-  test('包含启动和清理命令', () => {
-    const script = buildInstallScript(baseOpts)
-    assert.ok(script.includes('Start-Process'), '应包含 Start-Process 启动新版本')
-    assert.ok(script.includes('Remove-Item'), '应包含 Remove-Item 清理暂存')
+  test('参数校验：缺少 currentExePath 抛出错误', async () => {
+    const dir = makeTempDir()
+    const src = makeTempFile(dir, 'new.exe', 'new')
+
+    await assert.rejects(
+      () => performInstallInProcess({ downloadedFilePath: src, currentExePath: '', onProgress: () => {} }),
+      /缺少当前程序路径/
+    )
+
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  test('包含重试逻辑', () => {
-    const script = buildInstallScript(baseOpts)
-    assert.ok(script.includes('$maxRetry'), '应包含最大重试次数')
-    assert.ok(script.includes('while (-not $copied'), '应包含重试循环')
+  test('成功完成重命名和复制', async () => {
+    const dir = makeTempDir()
+    const currentExe = makeTempFile(dir, 'app.exe', 'old exe content')
+    const newExe = makeTempFile(dir, 'new.exe', 'new exe content')
+    const progressCalls = []
+
+    const result = await performInstallInProcess({
+      downloadedFilePath: newExe,
+      currentExePath: currentExe,
+      onProgress: (prog) => progressCalls.push(prog)
+    })
+
+    // 验证返回值
+    assert.ok(result.ok, '应返回 ok: true')
+    assert.strictEqual(result.oldExePath, currentExe + '.old')
+
+    // 验证文件：原路径应包含新内容
+    assert.strictEqual(fs.readFileSync(currentExe, 'utf8'), 'new exe content')
+    // .old 应包含旧内容
+    assert.strictEqual(fs.readFileSync(currentExe + '.old', 'utf8'), 'old exe content')
+
+    // 验证进度回调被调用
+    assert.ok(progressCalls.length >= 3, '应至少有 preparing/renaming/copying 三个进度回调')
+    assert.strictEqual(progressCalls[0].step, 'preparing')
+    assert.ok(progressCalls.some(p => p.step === 'renaming'))
+    assert.ok(progressCalls.some(p => p.step === 'installed'))
+
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  test('包含等待进程退出逻辑', () => {
-    const script = buildInstallScript(baseOpts)
-    assert.ok(script.includes('Get-Process -Id $TargetPid'), '应等待原进程退出')
-    assert.ok(script.includes('等待超时'), '应包含超时处理')
+  test('进度回调包含 copying 阶段的百分比', async () => {
+    const dir = makeTempDir()
+    const currentExe = makeTempFile(dir, 'app.exe', 'old')
+    // 创建一个稍大的文件以触发多次 data 事件
+    const bigContent = 'x'.repeat(1024 * 100)
+    const newExe = makeTempFile(dir, 'new.exe', bigContent)
+    const progressCalls = []
+
+    await performInstallInProcess({
+      downloadedFilePath: newExe,
+      currentExePath: currentExe,
+      onProgress: (prog) => progressCalls.push(prog)
+    })
+
+    const copyProgress = progressCalls.filter(p => p.step === 'copying')
+    assert.ok(copyProgress.length > 0, '应有 copying 阶段进度')
+    // 至少有一个进度带百分比
+    assert.ok(copyProgress.some(p => typeof p.percent === 'number'), '应有百分比进度')
+
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  test('缺少参数时抛出错误', () => {
-    assert.throws(() => buildInstallScript({}), /缺少必要参数/)
-    assert.throws(() => buildInstallScript({ pid: 1 }), /缺少必要参数/)
-    assert.throws(() => buildInstallScript({ pid: 1, downloadedFilePath: 'x' }), /缺少必要参数/)
+  test('安装前清理残留的 .old 文件', async () => {
+    const dir = makeTempDir()
+    const currentExe = makeTempFile(dir, 'app.exe', 'old exe')
+    const newExe = makeTempFile(dir, 'new.exe', 'new exe')
+    const oldOld = path.join(dir, 'app.exe.old')
+    fs.writeFileSync(oldOld, 'stale old file')
+
+    await performInstallInProcess({
+      downloadedFilePath: newExe,
+      currentExePath: currentExe,
+      onProgress: () => {}
+    })
+
+    // .old 应包含旧的 exe 内容，而不是之前的残留
+    assert.strictEqual(fs.readFileSync(currentExe + '.old', 'utf8'), 'old exe')
+
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  test('中文路径正确处理', () => {
-    const opts = {
-      ...baseOpts,
-      downloadedFilePath: 'D:\\代码\\书签管理器\\update\\new.exe',
-      currentExePath: 'D:\\代码\\书签管理器\\BookmarkManager.exe',
-      stagingDir: 'D:\\代码\\书签管理器\\update'
-    }
-    const script = buildInstallScript(opts)
-    assert.ok(script.includes('D:\\代码\\书签管理器\\update\\new.exe'), '应包含中文路径')
-    assert.ok(script.includes('D:\\代码\\书签管理器\\BookmarkManager.exe'), '应包含中文目标路径')
+  test('源文件不存在时抛出错误', async () => {
+    await assert.rejects(
+      () => performInstallInProcess({
+        downloadedFilePath: '/nonexistent/path/new.exe',
+        currentExePath: '/some/path/app.exe',
+        onProgress: () => {}
+      }),
+      /下载的更新文件不存在/
+    )
   })
+})
 
-  test('含单引号路径正确转义', () => {
-    const opts = {
-      ...baseOpts,
-      downloadedFilePath: "C:\\test's dir\\update.exe"
-    }
-    const script = buildInstallScript(opts)
-    // 单引号应被转义为两个单引号
-    assert.ok(script.includes("C:\\test''s dir\\update.exe"), '单引号应被转义为两个单引号')
-  })
-
-  test('包含友好的安装步骤提示', () => {
-    const script = buildInstallScript(baseOpts)
-    assert.ok(script.includes('[1/4]'), '应显示步骤1')
-    assert.ok(script.includes('[2/4]'), '应显示步骤2')
-    assert.ok(script.includes('[3/4]'), '应显示步骤3')
-    assert.ok(script.includes('[4/4]'), '应显示步骤4')
-    assert.ok(script.includes('正在安装书签管理器更新'), '应显示安装标题')
-  })
-
-  test('失败时暂停等待用户确认', () => {
-    const script = buildInstallScript(baseOpts)
-    assert.ok(script.includes('ReadKey'), '失败时应等待用户按键')
-    assert.ok(script.includes('更新安装失败'), '应显示失败信息')
-  })
-
-  test('PID 为数字类型', () => {
-    const opts = { ...baseOpts, pid: '99999' }
-    const script = buildInstallScript(opts)
-    assert.ok(script.includes('$TargetPid = 99999'), 'PID 应被转为数字')
+describe('launchNewVersion', () => {
+  test('返回 ok 结构', () => {
+    // launchNewVersion 不同步抛出错误（spawn 是异步的）
+    // 只验证返回结构
+    const result = launchNewVersion('notepad.exe')
+    assert.ok(result.ok, '应返回 ok: true')
   })
 })

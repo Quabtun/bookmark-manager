@@ -102,7 +102,7 @@ export function pickBestAsset(assets) {
 
 // ============================================================
 // 生成 portable 模式更新批处理脚本
-// @deprecated 已被 installer.js#buildInstallScript (PowerShell) 取代
+// @deprecated 已被 installer.js#performInstallInProcess (进程内安装) 取代
 // 保留此函数供现有单元测试使用
 // ============================================================
 export function buildUpdateBatContent(options) {

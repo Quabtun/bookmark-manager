@@ -58,6 +58,9 @@ let downloadedFilePath = null
 let isCancelling = false   // [FIX] 取消标志，防止重试覆盖状态
 let downloadSessionId = 0  // [FIX] 下载会话 ID，区分不同下载周期
 
+// 安装相关
+let _installDone = false  // 安装完成标志，允许 app.quit() 通过 before-quit
+
 // ============================================================
 // 工具函数
 // ============================================================
@@ -89,6 +92,25 @@ function notifyProgress(prog) {
       win.webContents.send('updater:progress', prog)
     }
   }
+}
+
+// 发送安装进度到更新窗口
+function notifyInstallProgress(prog) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && win._isUpdaterWindow) {
+      win.webContents.send('updater:install-progress', prog)
+    }
+  }
+}
+
+// 获取主窗口（非更新窗口）
+function getMainWindowRef() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win._isUpdaterWindow && !win.isDestroyed()) {
+      return win
+    }
+  }
+  return null
 }
 
 function isPortableBuild() {
@@ -626,49 +648,92 @@ export async function startDownload() {
 }
 
 // ============================================================
-// 安装更新
+// 安装更新 —— 进程内安装，不使用外部脚本
+// 流程：隐藏主窗口 → 重命名 exe → 复制新 exe → 启动新版本 → 退出
+// 更新窗口全程保持可见，显示安装进度
 // ============================================================
 export async function installUpdate() {
   if (currentState !== STATE.DOWNLOADED) {
     return { error: '更新未就绪' }
   }
 
+  _installDone = false
+
   try {
     setState(STATE.INSTALLING)
 
-    // autoUpdater 模式
+    // autoUpdater 模式（安装版，非 portable）
     if (canUseAutoUpdater()) {
+      _installDone = true
       autoUpdater.quitAndInstall(false, true)
       return { ok: true }
     }
 
-    // portable 模式：通过安装层（installer.js）执行
+    // portable 模式：进程内安装
     if (!downloadedFilePath || !fs.existsSync(downloadedFilePath)) {
       throw new Error('下载文件不存在')
     }
 
-    // [FIX] 分层架构：更新窗口先显示"正在安装"状态，给 UI 时间渲染
-    // 这样更新页面不会在点击安装后立即退出
-    await new Promise(r => setTimeout(r, 800))
+    const { performInstallInProcess, launchNewVersion } = await import('./installer.js')
 
-    // 调用安装层：生成 PowerShell 脚本并 spawn（PS 窗口接管显示进度）
-    const { spawnInstaller } = await import('./installer.js')
-    spawnInstaller({
-      pid: process.pid,
+    // [1/4] 隐藏主窗口（不关闭进程），更新窗口保持可见
+    const mainWindow = getMainWindowRef()
+    if (mainWindow) {
+      mainWindow.hide()
+      console.log('[updater] 主窗口已隐藏')
+    }
+
+    // 给 UI 时间渲染"正在安装"状态
+    notifyInstallProgress({ step: 'preparing', message: '准备安装…' })
+    await new Promise(r => setTimeout(r, 500))
+
+    // [2/4] 执行安装：重命名当前 exe → .old，复制新 exe 到原路径
+    const installResult = await performInstallInProcess({
       downloadedFilePath,
       currentExePath: process.execPath,
-      stagingDir: STAGING_DIR
+      onProgress: (prog) => {
+        console.log('[updater] 安装进度:', prog.step, prog.message)
+        notifyInstallProgress(prog)
+      }
     })
+    console.log('[updater] 安装完成:', installResult)
 
-    // [FIX] 再给 UI 时间显示"应用即将重启"，然后退出
-    // PowerShell 窗口会持续显示安装进度，直到新版本启动
-    await new Promise(r => setTimeout(r, 400))
+    // [3/4] 启动新版本
+    notifyInstallProgress({ step: 'launching', message: '正在启动新版本…' })
+    await new Promise(r => setTimeout(r, 500))
+    launchNewVersion(process.execPath)
 
+    // [4/4] 清理暂存文件夹并退出
+    notifyInstallProgress({ step: 'done', message: '更新完成，正在退出…' })
+    try {
+      if (fs.existsSync(STAGING_DIR)) {
+        const files = fs.readdirSync(STAGING_DIR)
+        for (const f of files) {
+          try { fs.unlinkSync(path.join(STAGING_DIR, f)) } catch {}
+        }
+        try { fs.rmdirSync(STAGING_DIR) } catch {}
+      }
+    } catch {}
+
+    // 短暂等待让用户看到完成消息
+    await new Promise(r => setTimeout(r, 1000))
+
+    _installDone = true
     app.quit()
     return { ok: true }
   } catch (e) {
+    console.error('[updater] installUpdate 失败:', e)
     lastError = e.message
     setState(STATE.ERROR)
+
+    // 恢复主窗口
+    const mainWindow = getMainWindowRef()
+    if (mainWindow) {
+      mainWindow.show()
+      mainWindow.focus()
+    }
+
+    notifyInstallProgress({ step: 'error', message: e.message })
     return { error: e.message }
   }
 }
@@ -733,6 +798,14 @@ export function isDownloading() {
          currentState === STATE.DELTA_APPLYING
 }
 
+export function isInstalling() {
+  return currentState === STATE.INSTALLING
+}
+
+export function isInstallDone() {
+  return _installDone
+}
+
 export function isDownloaded() {
   return currentState === STATE.DOWNLOADED
 }
@@ -742,6 +815,15 @@ export function isDownloaded() {
 // ============================================================
 export async function initUpdater() {
   cleanupStaging()
+
+  // 清理上次更新残留的 .old 文件
+  try {
+    const { cleanupOldExe } = await import('./installer.js')
+    cleanupOldExe(process.execPath)
+  } catch (e) {
+    console.warn('[updater] 清理 .old 文件失败:', e.message)
+  }
+
   await loadAutoUpdater()
   try {
     const settings = loadSettings()

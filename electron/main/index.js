@@ -5,7 +5,7 @@ import { registerIpc, getMainWindow, setMainWindow } from './ipc.js'
 import { loadSettings, saveSettings, loadBookmarks, saveBookmarks, loadCategories, saveCategories } from './store.js'
 import { loadAllPlugins, unloadAllPlugins } from './plugins.js'
 import { createLockWindow, checkPassword } from './lockscreen.js'
-import { initUpdater, isDownloading } from './updater.js'
+import { initUpdater, isDownloading, isInstalling, isInstallDone } from './updater.js'
 import { createUpdaterWindow, getUpdaterWindow, closeUpdaterWindow, registerUpdaterWindowIpc, focusUpdaterWindow } from './updater-window.js'
 
 // 确保首次启动时数据文件存在
@@ -209,6 +209,11 @@ app.whenReady().then(async () => {
 let isQuitting = false
 app.on('before-quit', (e) => {
   if (isQuitting) return
+  // 安装中：阻止退出（除非安装已完成）
+  if (isInstalling() && !isInstallDone()) {
+    e.preventDefault()
+    return
+  }
   // 如果正在下载更新，阻止退出并聚焦更新窗口
   if (isDownloading()) {
     e.preventDefault()

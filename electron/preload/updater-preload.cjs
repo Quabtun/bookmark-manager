@@ -9,7 +9,8 @@ const UPDATER_INVOKE_CHANNELS = new Set([
 
 const UPDATER_ON_CHANNELS = new Set([
   'updater:state-changed', 'updater:progress',
-  'updater:download-complete', 'updater:error'
+  'updater:download-complete', 'updater:error',
+  'updater:install-progress'
 ])
 
 contextBridge.exposeInMainWorld('updater', {
