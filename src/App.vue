@@ -1,27 +1,44 @@
 <template>
   <div class="h-screen flex flex-col bg-theme text-slate-800 dark:text-slate-100">
-    <!-- 校验/预览进度条（可折叠） -->
-    <div v-if="ui.batchProgress.active && !progressCollapsed" class="fixed top-12 left-64 right-0 z-[100] px-4 py-1.5 bg-white/95 dark:bg-slate-800/95 border-b border-slate-200/50 dark:border-slate-700/50 backdrop-blur shadow-sm">
-      <div class="flex items-center gap-3">
-        <span class="text-sm">{{ ui.batchProgress.kind === 'validate' ? '🩺' : '🖼️' }}</span>
-        <span class="text-xs text-slate-600 dark:text-slate-300 font-medium">
-          {{ ui.batchProgress.kind === 'validate' ? '校验书签' : '加载预览' }}
-        </span>
-        <span class="text-xs text-slate-400">{{ ui.batchProgress.done }}/{{ ui.batchProgress.total }}</span>
-        <div class="flex-1 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-          <div class="h-full rounded-full transition-all duration-300" 
-               style="background: var(--accent-500)"
-               :style="{ width: progressPercent + '%' }"></div>
+    <!-- 校验/预览进度条（右下角浮动卡片，可折叠） -->
+    <Transition name="progress-fade">
+      <!-- 展开状态 -->
+      <div v-if="ui.batchProgress.active && !progressCollapsed"
+           key="expanded"
+           class="fixed bottom-20 right-5 z-50 w-72 glass shadow-glass rounded-xl px-4 py-3">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="text-base">{{ ui.batchProgress.kind === 'validate' ? '🩺' : '🖼️' }}</span>
+          <span class="text-sm font-medium flex-1">
+            {{ ui.batchProgress.kind === 'validate' ? '校验书签' : '加载预览' }}
+          </span>
+          <span class="text-xs text-slate-400 tabular-nums">{{ ui.batchProgress.done }}/{{ ui.batchProgress.total }}</span>
+          <button @click="progressCollapsed = true"
+                  class="ml-1 w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition-colors"
+                  title="折叠">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 6L5 3L8 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
         </div>
-        <span class="text-xs text-slate-400">{{ progressPercent }}%</span>
-        <button @click="progressCollapsed = true" class="text-xs text-slate-400 hover:text-slate-600 px-1" title="折叠">▲</button>
+        <div class="flex items-center gap-2">
+          <div class="flex-1 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+            <div class="h-full rounded-full transition-all duration-300 relative overflow-hidden"
+                 style="background: var(--accent-500)"
+                 :style="{ width: progressPercent + '%' }">
+              <span class="absolute inset-0 shimmer-bar"></span>
+            </div>
+          </div>
+          <span class="text-xs font-medium text-slate-500 dark:text-slate-400 tabular-nums w-8 text-right">{{ progressPercent }}%</span>
+        </div>
       </div>
-    </div>
-    <!-- 折叠后的迷你进度条 -->
-    <div v-if="ui.batchProgress.active && progressCollapsed" @click="progressCollapsed = false"
-         class="fixed top-12 left-64 z-[100] cursor-pointer px-3 py-0.5 bg-white/90 dark:bg-slate-800/90 border-b border-slate-200/50 dark:border-slate-700/50 text-xs text-slate-400 hover:text-accent">
-      {{ ui.batchProgress.kind === 'validate' ? '🩺' : '🖼️' }} {{ progressPercent }}% ▼
-    </div>
+      <!-- 折叠状态：迷你药丸 -->
+      <div v-else-if="ui.batchProgress.active && progressCollapsed"
+           key="collapsed"
+           @click="progressCollapsed = false"
+           class="fixed bottom-20 right-5 z-50 cursor-pointer glass shadow-glass rounded-full px-3 py-1.5 flex items-center gap-1.5 hover:scale-105 transition-transform">
+        <span class="text-sm">{{ ui.batchProgress.kind === 'validate' ? '🩺' : '🖼️' }}</span>
+        <span class="text-xs font-medium text-slate-500 dark:text-slate-400 tabular-nums">{{ progressPercent }}%</span>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="text-slate-400"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </div>
+    </Transition>
 
     <router-view />
 
@@ -81,12 +98,10 @@ onMounted(async () => {
   }))
   offs.push(window.api.on('validate:progress', (p) => {
     ui.batchProgress = { active: true, kind: 'validate', ...p }
-    progressCollapsed.value = false  // 新校验自动展开
     if (p.done >= p.total) setTimeout(() => { ui.batchProgress.active = false }, 600)
   }))
   offs.push(window.api.on('preview:progress', (p) => {
     ui.batchProgress = { active: true, kind: 'preview', ...p }
-    progressCollapsed.value = false  // 新预览自动展开
     if (p.done >= p.total) setTimeout(() => { ui.batchProgress.active = false }, 600)
   }))
 })
@@ -97,4 +112,27 @@ onUnmounted(() => offs.forEach((f) => f && f()))
 .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
 .toast-enter-from { opacity: 0; transform: translateX(20px); }
 .toast-leave-to { opacity: 0; transform: translateX(20px); }
+
+/* 进度卡片淡入淡出 */
+.progress-fade-enter-active, .progress-fade-leave-active {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.progress-fade-enter-from {
+  opacity: 0;
+  transform: translateY(10px) scale(0.95);
+}
+.progress-fade-leave-to {
+  opacity: 0;
+  transform: translateY(10px) scale(0.95);
+}
+
+/* 进度条流光效果 */
+.shimmer-bar {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+  animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
 </style>

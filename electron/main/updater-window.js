@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeTheme } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkForUpdates, startDownload, installUpdate, cancelDownload, getState, isDownloading, isInstalling } from './updater.js'
+import { checkForUpdates, startDownload, installUpdate, cancelDownload, getState, isDownloading, isInstalling, isInstallDone } from './updater.js'
 
 let updaterWindow = null
 
@@ -481,7 +481,7 @@ function getUpdaterHTML() {
 </head>
 <body>
   <div class="titlebar">
-    <div class="titlebar-title">🔄 检查更新 <span style="font-size:10px;color:var(--text-muted);font-weight:400">v1.4.3</span></div>
+    <div class="titlebar-title">🔄 检查更新 <span style="font-size:10px;color:var(--text-muted);font-weight:400">v1.4.4</span></div>
     <button class="titlebar-close" id="btnClose">×</button>
   </div>
 
@@ -982,6 +982,8 @@ export function createUpdaterWindow(autoCheck = true) {
 
   // 下载中或安装中时阻止直接关闭，需要用户确认
   updaterWindow.on('close', (e) => {
+    // 安装已完成：允许关闭
+    if (isInstallDone()) return
     // 安装中：禁止关闭，必须等安装完成
     if (isInstalling() && !updaterWindow._forceClose) {
       e.preventDefault()

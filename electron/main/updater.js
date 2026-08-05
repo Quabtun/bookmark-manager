@@ -718,8 +718,12 @@ export async function installUpdate() {
     // 短暂等待让用户看到完成消息
     await new Promise(r => setTimeout(r, 1000))
 
+    // 标记安装完成并重置状态，允许 before-quit 和 close 事件通过
     _installDone = true
-    app.quit()
+    currentState = STATE.IDLE
+
+    // 强制退出（不经过 before-quit 的下载/安装拦截逻辑）
+    app.exit(0)
     return { ok: true }
   } catch (e) {
     console.error('[updater] installUpdate 失败:', e)
