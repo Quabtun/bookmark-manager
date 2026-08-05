@@ -214,7 +214,7 @@ export function launchNewVersion(exePath) {
       reject(new Error('启动新版本失败: ' + err.message))
     })
 
-    // 超时保护：5 秒内未触发 spawn 事件也视为成功
+    // 超时保护：2 秒内未触发 spawn 事件也视为成功
     // （进程可能已启动但事件因 stdio: 'ignore' 而丢失）
     setTimeout(() => {
       if (settled) return
@@ -222,7 +222,7 @@ export function launchNewVersion(exePath) {
       child.unref()
       console.log('[installer] 新版本启动确认超时，假设已成功启动, pid:', child.pid)
       resolve({ ok: true, pid: child.pid, timeout: true })
-    }, 5000)
+    }, 2000)
   })
 }
 
@@ -321,6 +321,6 @@ export function launchExternalUpdater(scriptPath) {
       child.unref()
       console.log('[installer] 更新脚本启动超时，假设已成功, pid:', child.pid)
       resolve({ ok: true, pid: child.pid, timeout: true })
-    }, 5000)
+    }, 2000)
   })
 }

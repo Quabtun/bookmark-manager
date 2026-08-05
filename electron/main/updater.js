@@ -6,7 +6,7 @@ import { requestWithTimeout, downloadToStream } from './http.js'
 import { loadSettings } from './store.js'
 import {
   compareVersions, extractFileNameFromUrl, isValidDownloadUrl,
-  pickBestAsset, calcProgress
+  pickBestAsset
 } from './updater-logic.js'
 import { findDeltaAsset, isDeltaWorthIt } from './delta-logic.js'
 import { performDeltaUpdate } from './delta-updater.js'
@@ -335,11 +335,12 @@ function downloadToStaging(url, fileName, sessionId) {
     ensureStagingDir()
     const destPath = path.join(STAGING_DIR, fileName)
     const tmpPath = destPath + '.tmp'
-    const file = fs.createWriteStream(tmpPath)
+    const file = fs.createWriteStream(tmpPath, { highWaterMark: 1024 * 1024 })
 
     let startTime = Date.now()
     let lastReceivedBytes = 0
     let lastSpeedTime = Date.now()
+    let lastSpeed = 0  // 保存上一次瞬时速度
 
     // [FIX] settled 标志：防止 reject/resolve 被多次调用
     let settled = false
@@ -361,23 +362,25 @@ function downloadToStaging(url, fileName, sessionId) {
       reject(err)
     }
 
-    // 进度回调：计算瞬时速度和 ETA
+    // 进度回调：使用瞬时速度而非全局平均速度
     const onProgress = ({ receivedBytes, totalBytes }) => {
       const now = Date.now()
-      // 计算瞬时速度（基于最近时间窗口）
       const dt = (now - lastSpeedTime) / 1000
-      let speed = 0
-      if (dt > 0.3) {  // 至少 300ms 计算一次速度
-        speed = (receivedBytes - lastReceivedBytes) / dt
+      if (dt > 0.3) {  // 至少 300ms 计算一次瞬时速度
+        lastSpeed = (receivedBytes - lastReceivedBytes) / dt
         lastReceivedBytes = receivedBytes
         lastSpeedTime = now
-      } else {
-        // 沿用上一次速度
-        speed = lastReceivedBytes > 0 ? (receivedBytes / ((now - startTime) / 1000)) : 0
       }
+      // 使用瞬时速度，避免全局平均速度被连接建立时间拉低
       const remainingBytes = totalBytes - receivedBytes
-      const eta = speed > 0 ? Math.ceil(remainingBytes / speed) : 0
-      notifyProgress(calcProgress(receivedBytes, totalBytes, now - startTime))
+      const eta = lastSpeed > 0 ? Math.ceil(remainingBytes / lastSpeed) : 0
+      notifyProgress({
+        percent: totalBytes > 0 ? Math.min(100, Math.round(receivedBytes / totalBytes * 100)) : 0,
+        transferred: receivedBytes,
+        total: totalBytes,
+        bytesPerSecond: Math.round(lastSpeed),
+        eta
+      })
     }
 
     // onRequest 回调：保存当前请求引用用于取消（仅当前会话有效）
@@ -534,10 +537,14 @@ async function downloadWithRetryAuto() {
 // ============================================================
 async function tryDeltaUpdate() {
   const sessionId = downloadSessionId
-  const deltaStartTime = Date.now()
   const fallbackName = `BookmarkManager-${updateInfo.version}-portable.exe`
 
   setState(STATE.DELTA_DOWNLOADING)
+
+  // 差分下载的瞬时速度计算
+  let deltaLastBytes = 0
+  let deltaLastTime = Date.now()
+  let deltaSpeed = 0
 
   try {
     const result = await performDeltaUpdate({
@@ -548,7 +555,22 @@ async function tryDeltaUpdate() {
       destFileName: fallbackName,
       onDownloadProgress: ({ receivedBytes, totalBytes }) => {
         if (sessionId !== downloadSessionId) return
-        notifyProgress(calcProgress(receivedBytes, totalBytes, Date.now() - deltaStartTime))
+        const now = Date.now()
+        const dt = (now - deltaLastTime) / 1000
+        if (dt > 0.3) {
+          deltaSpeed = (receivedBytes - deltaLastBytes) / dt
+          deltaLastBytes = receivedBytes
+          deltaLastTime = now
+        }
+        const remaining = totalBytes - receivedBytes
+        const eta = deltaSpeed > 0 ? Math.ceil(remaining / deltaSpeed) : 0
+        notifyProgress({
+          percent: totalBytes > 0 ? Math.min(100, Math.round(receivedBytes / totalBytes * 100)) : 0,
+          transferred: receivedBytes,
+          total: totalBytes,
+          bytesPerSecond: Math.round(deltaSpeed),
+          eta
+        })
       },
       onApplyProgress: ({ phase, message }) => {
         if (sessionId !== downloadSessionId) return
@@ -684,7 +706,7 @@ export async function installUpdate() {
     }
 
     notifyInstallProgress({ step: 'preparing', message: '准备安装…' })
-    await new Promise(r => setTimeout(r, 500))
+    await new Promise(r => setTimeout(r, 200))
 
     // [2/5] 尝试进程内安装（有进度显示）
     let installSuccess = false
@@ -702,7 +724,7 @@ export async function installUpdate() {
     } catch (installErr) {
       console.error('[updater] 进程内安装失败:', installErr.message)
       notifyInstallProgress({ step: 'preparing', message: '正在切换到外部更新模式…' })
-      await new Promise(r => setTimeout(r, 500))
+      await new Promise(r => setTimeout(r, 200))
     }
 
     // [3/5] 释放单实例锁（无论哪种安装方式，新版本都需要获取锁）

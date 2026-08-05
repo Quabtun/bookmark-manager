@@ -411,7 +411,14 @@ export function downloadToStream(url, writable, { onProgress, timeout = 30000, h
       if (!proxy) {
         // 直连
         const lib = useHttps ? https : http
-        const req = lib.get(u, { headers: reqHeaders, timeout }, onResp)
+        const req = lib.get(u, { headers: reqHeaders, timeout }, (res) => {
+          // 禁用 Nagle 算法，减少小包延迟
+          if (res.socket) {
+            try { res.socket.setNoDelay(true) } catch { /* ignore */ }
+            try { res.socket.setKeepAlive(true) } catch { /* ignore */ }
+          }
+          onResp(res)
+        })
         attachReq(req)
       } else if (proxy.type === 'socks5') {
         // SOCKS5 代理

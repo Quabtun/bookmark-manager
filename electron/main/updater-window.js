@@ -481,7 +481,7 @@ function getUpdaterHTML() {
 </head>
 <body>
   <div class="titlebar">
-    <div class="titlebar-title">🔄 检查更新 <span style="font-size:10px;color:var(--text-muted);font-weight:400">v1.4.6-test</span></div>
+    <div class="titlebar-title">🔄 检查更新 <span style="font-size:10px;color:var(--text-muted);font-weight:400">v1.4.7-test</span></div>
     <button class="titlebar-close" id="btnClose">×</button>
   </div>
 

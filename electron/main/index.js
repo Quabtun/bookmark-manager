@@ -93,7 +93,7 @@ function createMainWindow() {
     minHeight: 640,
     show: false,
     backgroundColor: '#f8fafc',
-    title: '书签管理器 v1.4.6-test',
+    title: '书签管理器 v1.4.7-test',
     autoHideMenuBar: true,
     fullscreenable: false,
     webPreferences: {
