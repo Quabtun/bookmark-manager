@@ -648,9 +648,9 @@ export async function startDownload() {
 }
 
 // ============================================================
-// 安装更新 —— 进程内安装，不使用外部脚本
-// 流程：隐藏主窗口 → 重命名 exe → 复制新 exe → 启动新版本 → 退出
-// 更新窗口全程保持可见，显示安装进度
+// 安装更新 —— 混合模式：先尝试进程内安装（有进度），失败回退外部脚本
+// [FIX] 释放单实例锁，确保新版本能正常启动
+// [FIX] 外部脚本方式：文件操作在旧进程退出后执行，避免文件锁定
 // ============================================================
 export async function installUpdate() {
   if (currentState !== STATE.DOWNLOADED) {
@@ -669,54 +669,100 @@ export async function installUpdate() {
       return { ok: true }
     }
 
-    // portable 模式：进程内安装
+    // portable 模式
     if (!downloadedFilePath || !fs.existsSync(downloadedFilePath)) {
       throw new Error('下载文件不存在')
     }
 
-    const { performInstallInProcess, launchNewVersion } = await import('./installer.js')
+    const installer = await import('./installer.js')
 
-    // [1/4] 隐藏主窗口（不关闭进程），更新窗口保持可见
+    // [1/5] 隐藏主窗口（不关闭进程），更新窗口保持可见
     const mainWindow = getMainWindowRef()
     if (mainWindow) {
       mainWindow.hide()
       console.log('[updater] 主窗口已隐藏')
     }
 
-    // 给 UI 时间渲染"正在安装"状态
     notifyInstallProgress({ step: 'preparing', message: '准备安装…' })
     await new Promise(r => setTimeout(r, 500))
 
-    // [2/4] 执行安装：重命名当前 exe → .old，复制新 exe 到原路径
-    const installResult = await performInstallInProcess({
-      downloadedFilePath,
-      currentExePath: process.execPath,
-      onProgress: (prog) => {
-        console.log('[updater] 安装进度:', prog.step, prog.message)
-        notifyInstallProgress(prog)
-      }
-    })
-    console.log('[updater] 安装完成:', installResult)
-
-    // [3/4] 启动新版本
-    notifyInstallProgress({ step: 'launching', message: '正在启动新版本…' })
-    await new Promise(r => setTimeout(r, 500))
-    launchNewVersion(process.execPath)
-
-    // [4/4] 清理暂存文件夹并退出
-    notifyInstallProgress({ step: 'done', message: '更新完成，正在退出…' })
+    // [2/5] 尝试进程内安装（有进度显示）
+    let installSuccess = false
     try {
-      if (fs.existsSync(STAGING_DIR)) {
-        const files = fs.readdirSync(STAGING_DIR)
-        for (const f of files) {
-          try { fs.unlinkSync(path.join(STAGING_DIR, f)) } catch {}
+      const installResult = await installer.performInstallInProcess({
+        downloadedFilePath,
+        currentExePath: process.execPath,
+        onProgress: (prog) => {
+          console.log('[updater] 安装进度:', prog.step, prog.message)
+          notifyInstallProgress(prog)
         }
-        try { fs.rmdirSync(STAGING_DIR) } catch {}
-      }
-    } catch {}
+      })
+      console.log('[updater] 进程内安装完成:', installResult)
+      installSuccess = true
+    } catch (installErr) {
+      console.error('[updater] 进程内安装失败:', installErr.message)
+      notifyInstallProgress({ step: 'preparing', message: '正在切换到外部更新模式…' })
+      await new Promise(r => setTimeout(r, 500))
+    }
 
-    // 短暂等待让用户看到完成消息
-    await new Promise(r => setTimeout(r, 1000))
+    // [3/5] 释放单实例锁（无论哪种安装方式，新版本都需要获取锁）
+    try {
+      app.releaseSingleInstanceLock()
+      console.log('[updater] 单实例锁已释放')
+    } catch (e) {
+      console.warn('[updater] 释放单实例锁失败:', e.message)
+    }
+
+    if (installSuccess) {
+      // 进程内安装成功 → 直接启动新版本
+      notifyInstallProgress({ step: 'launching', message: '正在启动新版本…' })
+      await new Promise(r => setTimeout(r, 500))
+
+      try {
+        await installer.launchNewVersion(process.execPath)
+        console.log('[updater] 新版本启动成功')
+      } catch (launchErr) {
+        console.error('[updater] 新版本启动失败，回退到外部脚本:', launchErr.message)
+        // 启动失败，使用外部脚本重新安装并启动
+        const scriptPath = installer.createExternalUpdateScript({
+          downloadedFilePath,
+          currentExePath: process.execPath,
+          stagingDir: STAGING_DIR
+        })
+        await installer.launchExternalUpdater(scriptPath)
+      }
+    } else {
+      // 进程内安装失败 → 使用外部脚本方式
+      notifyInstallProgress({ step: 'launching', message: '正在启动外部更新程序…' })
+
+      const scriptPath = installer.createExternalUpdateScript({
+        downloadedFilePath,
+        currentExePath: process.execPath,
+        stagingDir: STAGING_DIR
+      })
+      await installer.launchExternalUpdater(scriptPath)
+    }
+
+    // [4/5] 清理暂存文件夹（外部脚本方式由脚本自身清理，这里仅清理进程内安装的残留）
+    if (installSuccess) {
+      notifyInstallProgress({ step: 'done', message: '更新完成，正在退出…' })
+      try {
+        if (fs.existsSync(STAGING_DIR)) {
+          const files = fs.readdirSync(STAGING_DIR)
+          for (const f of files) {
+            try { fs.unlinkSync(path.join(STAGING_DIR, f)) } catch {}
+          }
+          try { fs.rmdirSync(STAGING_DIR) } catch {}
+        }
+      } catch {}
+    } else {
+      // 外部脚本方式：暂存文件夹由 bat 脚本清理
+      notifyInstallProgress({ step: 'done', message: '更新已启动，正在退出…' })
+    }
+
+    // [5/5] 等待并退出
+    // 外部脚本方式需要更多时间让 bat 脚本启动
+    await new Promise(r => setTimeout(r, installSuccess ? 1000 : 1500))
 
     // 标记安装完成并重置状态，允许 before-quit 和 close 事件通过
     _installDone = true
@@ -736,6 +782,9 @@ export async function installUpdate() {
       mainWindow.show()
       mainWindow.focus()
     }
+
+    // 尝试重新获取单实例锁（如果之前释放了）
+    try { app.requestSingleInstanceLock() } catch {}
 
     notifyInstallProgress({ step: 'error', message: e.message })
     return { error: e.message }

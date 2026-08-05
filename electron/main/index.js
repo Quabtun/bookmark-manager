@@ -21,6 +21,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
+} else {
+  // [FIX] 第二个实例尝试启动时，聚焦已有窗口
+  app.on('second-instance', () => {
+    const win = getMainWindow()
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
+  })
 }
 
 let mainWindow = null

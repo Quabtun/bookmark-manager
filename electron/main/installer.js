@@ -183,19 +183,144 @@ export async function performInstallInProcess({
 }
 
 // ============================================================
-// 启动新版本
+// 启动新版本 —— 返回 Promise，使用 spawn 事件确认进程已启动
+// [FIX] 改为异步，等待 spawn 事件确认进程真正启动后再 resolve
+// [FIX] 添加超时保护，避免事件丢失导致永久阻塞
 // ============================================================
 export function launchNewVersion(exePath) {
-  console.log('[installer] 启动新版本:', exePath)
-  const child = spawn(exePath, [], {
+  return new Promise((resolve, reject) => {
+    console.log('[installer] 启动新版本:', exePath)
+    const child = spawn(exePath, [], {
+      detached: true,
+      stdio: 'ignore'
+    })
+
+    let settled = false
+
+    // spawn 事件：进程已成功启动
+    child.on('spawn', () => {
+      if (settled) return
+      settled = true
+      child.unref()
+      console.log('[installer] 新版本已启动, pid:', child.pid)
+      resolve({ ok: true, pid: child.pid })
+    })
+
+    // error 事件：启动失败（文件不存在、权限不足等）
+    child.on('error', (err) => {
+      if (settled) return
+      settled = true
+      console.error('[installer] 启动新版本失败:', err.message)
+      reject(new Error('启动新版本失败: ' + err.message))
+    })
+
+    // 超时保护：5 秒内未触发 spawn 事件也视为成功
+    // （进程可能已启动但事件因 stdio: 'ignore' 而丢失）
+    setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.unref()
+      console.log('[installer] 新版本启动确认超时，假设已成功启动, pid:', child.pid)
+      resolve({ ok: true, pid: child.pid, timeout: true })
+    }, 5000)
+  })
+}
+
+// ============================================================
+// 外部脚本安装方式（备选 / 主要方案）
+// 生成 bat 脚本，在旧进程退出后执行：
+//   等待旧进程退出 → 重命名旧 exe → 复制新 exe → 启动新版本 → 清理
+// 优势：文件操作在旧进程完全退出后进行，无文件锁定问题
+// ============================================================
+export function createExternalUpdateScript({ downloadedFilePath, currentExePath, stagingDir }) {
+  if (!downloadedFilePath || !fs.existsSync(downloadedFilePath)) {
+    throw new Error('下载的更新文件不存在: ' + downloadedFilePath)
+  }
+  if (!currentExePath) throw new Error('缺少当前程序路径')
+
+  const scriptDir = stagingDir || path.dirname(currentExePath)
+  const scriptPath = path.join(scriptDir, 'bookmark-update.bat')
+
+  // 统一路径格式
+  const newExe = downloadedFilePath.replace(/\//g, '\\')
+  const curExe = currentExePath.replace(/\//g, '\\')
+  const exeName = path.basename(curExe)
+  const oldName = exeName + '.old'
+  const oldExe = curExe + '.old'
+  const scriptDirStr = scriptDir.replace(/\//g, '\\')
+
+  // bat 脚本：使用 %~dp0 获取脚本所在目录
+  const script = `@echo off
+chcp 65001 >nul 2>&1
+:: 书签管理器自动更新脚本
+:: 等待旧进程完全退出
+timeout /t 3 /nobreak >nul
+:: 清理残留的 .old 文件
+if exist "${oldExe}" del /f /q "${oldExe}" 2>nul
+:: 重命名当前 exe 为 .old（Windows 允许重命名运行中的 exe）
+rename "${curExe}" "${oldName}" 2>nul
+:: 复制新版本到原路径（带重试）
+set /a retry=0
+:copy_retry
+copy /y "${newExe}" "${curExe}" >nul 2>&1
+if %errorlevel% neq 0 (
+  set /a retry+=1
+  if %retry% lss 10 (
+    timeout /t 1 /nobreak >nul
+    goto copy_retry
+  )
+)
+:: 启动新版本
+start "" "${curExe}"
+:: 清理旧文件和暂存文件夹
+del /f /q "${oldExe}" 2>nul
+del /f /q "${newExe}" 2>nul
+rd /s /q "${scriptDirStr}" 2>nul
+:: 删除自身
+(goto) 2>nul & del "%~f0"
+`
+
+  fs.writeFileSync(scriptPath, script, 'utf-8')
+  console.log('[installer] 外部更新脚本已创建:', scriptPath)
+  return scriptPath
+}
+
+// ============================================================
+// 启动外部更新脚本
+// ============================================================
+export function launchExternalUpdater(scriptPath) {
+  console.log('[installer] 启动外部更新脚本:', scriptPath)
+  const child = spawn('cmd.exe', ['/c', scriptPath], {
     detached: true,
-    stdio: 'ignore'
+    stdio: 'ignore',
+    windowsHide: true
   })
-  // 捕获 spawn 错误（如文件不存在），记录但不阻塞退出
-  child.on('error', (err) => {
-    console.error('[installer] 启动新版本失败:', err.message)
+
+  let settled = false
+
+  return new Promise((resolve, reject) => {
+    child.on('spawn', () => {
+      if (settled) return
+      settled = true
+      child.unref()
+      console.log('[installer] 更新脚本已启动, pid:', child.pid)
+      resolve({ ok: true, pid: child.pid })
+    })
+
+    child.on('error', (err) => {
+      if (settled) return
+      settled = true
+      console.error('[installer] 启动更新脚本失败:', err.message)
+      reject(new Error('启动更新脚本失败: ' + err.message))
+    })
+
+    // 超时保护
+    setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.unref()
+      console.log('[installer] 更新脚本启动超时，假设已成功, pid:', child.pid)
+      resolve({ ok: true, pid: child.pid, timeout: true })
+    }, 5000)
   })
-  child.unref()
-  console.log('[installer] 新版本已启动, pid:', child.pid)
-  return { ok: true, pid: child.pid }
 }
