@@ -41,6 +41,14 @@ try {
 } catch { /* keep default */ }
 
 export function getDataDir() { return DATA_DIR }
+export function saveDataDirPreference(dataDir = DATA_DIR) {
+  const settingsPath = path.join(DEFAULT_DATA_DIR, 'settings.json')
+  const current = readJSON(settingsPath, {})
+  writeJSON(settingsPath, {
+    ...current,
+    dataDir: dataDir === DEFAULT_DATA_DIR ? '' : dataDir
+  })
+}
 export function setDataDir(newPath) {
   if (!newPath) return false
   const parent = path.dirname(newPath)
@@ -66,8 +74,14 @@ export function writeFileAtomic(filePath, content) {
   ensureDirs()
   const dir = path.dirname(filePath)
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  const tmp = filePath + '.tmp-' + process.pid
-  fs.writeFileSync(tmp, content, 'utf8')
+  const tmp = filePath + '.tmp-' + process.pid + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
+  const fd = fs.openSync(tmp, 'w')
+  try {
+    fs.writeSync(fd, content, null, 'utf8')
+    fs.fsyncSync(fd)
+  } finally {
+    fs.closeSync(fd)
+  }
   // Windows 上 rename 可能因文件被其他进程占用而失败，回退为 copy + unlink
   try {
     fs.renameSync(tmp, filePath)
@@ -85,6 +99,11 @@ export function readJSON(filePath, fallback) {
     return JSON.parse(raw)
   } catch (e) {
     console.error('readJSON error', filePath, e.message)
+    try {
+      const corruptPath = `${filePath}.corrupt-${Date.now()}`
+      fs.copyFileSync(filePath, corruptPath)
+      console.error('readJSON backup created', corruptPath)
+    } catch { /* preserve the original failure if backup is unavailable */ }
     return fallback
   }
 }

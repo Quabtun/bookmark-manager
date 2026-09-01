@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-electron/
 release/
+release*/
 release2/
 release3/
 release4/

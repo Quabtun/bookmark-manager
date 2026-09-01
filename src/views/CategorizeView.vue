@@ -1,7 +1,7 @@
 <template>
   <div class="h-screen flex flex-col bg-theme">
     <!-- 顶栏 -->
-    <div class="px-5 py-3 glass border-b border-white/30 dark:border-slate-700/50 flex items-center gap-3 shrink-0">
+    <div class="px-5 py-3 bg-[var(--surface-base)] border-b border-[var(--stroke-subtle)] flex items-center gap-3 shrink-0">
       <router-link to="/" custom v-slot="{ navigate }">
         <button @click="navigate" class="btn-ghost">← 返回</button>
       </router-link>
@@ -221,8 +221,9 @@
                  @dragstart="onDragStart($event, b.id)"
                  @dragend="onDragEnd"
                  @click.stop="toggleSelect(b.id)"
-                 :class="['glass rounded-xl p-3 border cursor-pointer transition-all duration-150 hover:shadow-card',
-                          selectedIds.has(b.id) ? 'ring-2 ring-accent border-accent' : 'border-white/40 dark:border-slate-700/50 hover:border-brand-300']">
+                 @contextmenu.prevent="openBookmarkMenu(b, $event)"
+                 :class="['win-surface rounded-lg p-3 border cursor-pointer transition-all duration-150 hover:shadow-card',
+                          selectedIds.has(b.id) ? 'ring-2 ring-accent border-accent' : 'border-[var(--stroke-subtle)] hover:border-accent/40']">
               <div class="flex items-start gap-2.5">
                 <div class="w-8 h-8 rounded-lg bg-white dark:bg-slate-700 flex items-center justify-center shrink-0 shadow-sm ring-1 ring-black/5 overflow-hidden">
                   <img v-if="b.favicon && faviconUrls.get(b.favicon)" :src="faviconUrls.get(b.favicon)" class="w-5 h-5 object-contain" @error="$event.target.style.display='none'" />
@@ -400,11 +401,20 @@
         </div>
       </transition>
     </teleport>
+    <ContextMenu
+      :open="bookmarkContext.visible"
+      :x="bookmarkContext.x"
+      :y="bookmarkContext.y"
+      :items="bookmarkContextItems"
+      @close="bookmarkContext.visible = false"
+      @select="item => item.action?.()"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, reactive, watch } from 'vue'
+import ContextMenu from '../components/ContextMenu.vue'
 import { useBookmarksStore } from '../stores/bookmarks.js'
 import { useCategoriesStore } from '../stores/categories.js'
 import { useUiStore } from '../stores/ui.js'
@@ -443,6 +453,22 @@ const dragOverCat = ref(null)
 const searchQ = ref('')
 const statusFilter = ref('all')
 const selectedIds = ref(new Set())
+const bookmarkContext = ref({ visible: false, x: 0, y: 0, bookmarkId: null })
+const bookmarkContextItems = computed(() => {
+  const bookmark = bm.getById(bookmarkContext.value.bookmarkId)
+  if (!bookmark) return []
+  return [
+    { type: 'heading', label: bookmark.title || bookmark.url },
+    { id: 'select', label: '选择书签', icon: '✓', action: () => toggleSelect(bookmark.id) },
+    { id: 'copy-url', label: '复制 URL', icon: '⧉', action: () => { navigator.clipboard.writeText(bookmark.url); window.$toast('URL 已复制', 'success') } },
+    { id: 'toggle-pin', label: bookmark.pinned ? '取消置顶' : '置顶', icon: '☆', action: () => bm.togglePin(bookmark.id) },
+    { type: 'separator' },
+    { id: 'delete', label: '移入回收站', icon: '×', danger: true, action: () => bm.remove(bookmark.id) }
+  ]
+})
+function openBookmarkMenu(bookmark, event) {
+  bookmarkContext.value = { visible: true, x: event.clientX, y: event.clientY, bookmarkId: bookmark.id }
+}
 const batchCatId = ref('')
 const tagInputs = ref({})
 const tagInputVals = ref({})
@@ -666,12 +692,19 @@ const ioLoadingText = ref('')
 const detectedBrowsers = ref([])
 const importResult = ref(null)
 
+function getDesktopApi() {
+  if (!window.api || typeof window.api.invoke !== 'function') {
+    throw new Error('桌面功能不可用：请从书签管理器桌面应用启动后再导入，勿直接在浏览器中打开开发地址或 HTML 文件')
+  }
+  return window.api
+}
+
 async function doImport(type, browser) {
   ioLoading.value = true
   const channels = { html: 'io:importHtml', json: 'io:importJson', csv: 'io:importCsv', pocket: 'io:importPocketCsv', browser: 'io:importFromBrowser' }
   ioLoadingText.value = type === 'browser' ? `正在从 ${browser.name} 导入…` : '正在导入…'
   try {
-    const r = type === 'browser' ? await window.api.invoke(channels.browser, browser.path) : await window.api.invoke(channels[type])
+    const r = type === 'browser' ? await getDesktopApi().invoke(channels.browser, browser.path) : await getDesktopApi().invoke(channels[type])
     ioLoading.value = false
     if (!r || r.canceled) return
     if (r.error) { showResult('导入失败', '❌', r.error); return }
@@ -691,7 +724,7 @@ async function exportCategory(c) {
   ioLoadingText.value = `正在导出分类「${c.name}」…`
   ioLoading.value = true
   try {
-    const r = await window.api.invoke('io:exportCategory', c.id, cats.categories)
+    const r = await window.api.invoke('io:exportCategory', c.id)
     ioLoading.value = false
     if (!r || r.canceled) return
     if (r.error) { showResult('导出失败', '❌', r.error); return }
@@ -726,29 +759,27 @@ async function exportJson() {
 }
 
 async function exportStyledHtml() {
-  ioLoadingText.value = '正在生成带样式网页…'
+  ioLoadingText.value = '正在导出带样式网页…'
   ioLoading.value = true
   try {
     const r = await window.api.invoke('io:exportStyledHtml')
-    if (r && r.html) {
-      downloadBlob(r.html, 'bookmarks-' + today() + '.html', 'text/html')
-      showResult('导出完成', '🌐', '已导出为带样式的网页文件', [`共 ${bm.bookmarks.length} 个书签`])
-    }
+    if (!r || r.canceled) return
+    if (r.error) { showResult('导出失败', '❌', r.error); return }
+    if (r.exported) showResult('导出完成', '🌐', '已导出为带样式的网页文件', [`文件: ${r.path}`, `共 ${bm.bookmarks.length} 个书签`])
   } catch (e) { showResult('错误', '❌', '导出失败: ' + (e.message || e)) }
-  ioLoading.value = false
+  finally { ioLoading.value = false }
 }
 
 async function exportMarkdown() {
-  ioLoadingText.value = '正在生成 Markdown…'
+  ioLoadingText.value = '正在导出 Markdown…'
   ioLoading.value = true
   try {
     const r = await window.api.invoke('io:exportMarkdown')
-    if (r && r.markdown) {
-      downloadBlob(r.markdown, 'bookmarks-' + today() + '.md', 'text/markdown')
-      showResult('导出完成', '📝', '已导出为 Markdown', [`共 ${bm.bookmarks.length} 个书签`])
-    }
+    if (!r || r.canceled) return
+    if (r.error) { showResult('导出失败', '❌', r.error); return }
+    if (r.exported) showResult('导出完成', '📝', '已导出为 Markdown 文件', [`文件: ${r.path}`, `共 ${bm.bookmarks.length} 个书签`])
   } catch (e) { showResult('错误', '❌', '导出失败: ' + (e.message || e)) }
-  ioLoading.value = false
+  finally { ioLoading.value = false }
 }
 
 // ---- 工具函数 ----

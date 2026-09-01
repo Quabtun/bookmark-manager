@@ -14,7 +14,8 @@
       @new-smart-folder="smartFolderDialog.visible = true"
     />
 
-    <main class="flex-1 flex flex-col min-w-0 relative"
+    <main class="flex-1 flex flex-col min-w-0 relative bg-theme"
+          @contextmenu.prevent="onSurfaceContext"
           @dragover.prevent="onDragOverMain"
           @drop.prevent="onDropMain"
           @dragleave="onDragLeaveMain">
@@ -335,42 +336,22 @@
     <!-- 编辑弹窗 -->
     <EditModal v-model="editVisible" :bookmark="editing" @save="onSave" @delete="onDelete" />
 
-    <!-- 快速分类菜单 -->
-    <teleport to="body">
-      <div v-if="quickMenu.visible"
-           class="fixed z-[350] w-56 glass rounded-xl shadow-glass p-2 animate-pop max-h-[60vh] overflow-y-auto"
-           :style="{ left: quickMenu.x + 'px', top: quickMenu.y + 'px' }"
-           @click.stop>
-        <div class="text-xs text-slate-400 px-2 py-1">快速分类（按数字键）</div>
-        <button v-for="(c, i) in quickCats" :key="c.id"
-                @click="quickAssign(c.id)"
-                class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm hover:bg-brand-50 dark:hover:bg-slate-700">
-          <span class="w-5 text-xs text-slate-400">{{ i < 9 ? i + 1 : '' }}</span>
-          <span>{{ c.icon }}</span><span class="flex-1 text-left">{{ c.name }}</span>
-        </button>
-        <div class="border-t border-slate-200/50 dark:border-slate-700/50 my-1"></div>
-        <button @click="copyBookmarkUrl" class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm hover:bg-blue-50 dark:hover:bg-slate-700">
-          <span>📋</span><span class="flex-1 text-left">复制 URL</span>
-        </button>
-        <button @click="copyBookmarkTitle" class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm hover:bg-blue-50 dark:hover:bg-slate-700">
-          <span>📝</span><span class="flex-1 text-left">复制标题</span>
-        </button>
-        <button @click="copyAsMarkdown" class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm hover:bg-blue-50 dark:hover:bg-slate-700">
-          <span>🔗</span><span class="flex-1 text-left">复制为 Markdown</span>
-        </button>
-        <button @click="openInNewWindow" class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm hover:bg-blue-50 dark:hover:bg-slate-700">
-          <span>🪟</span><span class="flex-1 text-left">在新窗口打开</span>
-        </button>
-        <button @click="showQrCode" class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm hover:bg-blue-50 dark:hover:bg-slate-700">
-          <span>📱</span><span class="flex-1 text-left">生成二维码</span>
-        </button>
-        <button @click="openTagManager" class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm hover:bg-blue-50 dark:hover:bg-slate-700">
-          <span>🏷️</span><span class="flex-1 text-left">管理标签</span>
-        </button>
-        <div class="border-t border-slate-200/50 dark:border-slate-700/50 my-1"></div>
-        <button @click="quickMenu.visible = false" class="w-full text-left px-2 py-1.5 rounded-lg text-sm hover:bg-slate-100 dark:hover:bg-slate-700">取消 (Esc)</button>
-      </div>
-    </teleport>
+    <ContextMenu
+      :open="quickMenu.visible"
+      :x="quickMenu.x"
+      :y="quickMenu.y"
+      :items="bookmarkMenuItems"
+      @close="quickMenu.visible = false"
+      @select="onBookmarkMenuSelect"
+    />
+    <ContextMenu
+      :open="surfaceMenu.visible"
+      :x="surfaceMenu.x"
+      :y="surfaceMenu.y"
+      :items="surfaceMenuItems"
+      @close="surfaceMenu.visible = false"
+      @select="onSurfaceMenuSelect"
+    />
 
     <!-- 分类管理 -->
     <CategoryManager v-if="showCatMgr" v-model="showCatMgr" />
@@ -648,6 +629,7 @@ import GeoInfoPanel from '../components/GeoInfoPanel.vue'
 import WebPreview from '../components/WebPreview.vue'
 import TabbedPreview from '../components/TabbedPreview.vue'
 import ResultDialog from '../components/ResultDialog.vue'
+import ContextMenu from '../components/ContextMenu.vue'
 import { useBookmarksStore } from '../stores/bookmarks.js'
 import { useCategoriesStore } from '../stores/categories.js'
 import { useUiStore } from '../stores/ui.js'
@@ -657,6 +639,13 @@ const bm = useBookmarksStore()
 const cats = useCategoriesStore()
 const ui = useUiStore()
 const settings = useSettingsStore()
+
+function getDesktopApi() {
+  if (!window.api || typeof window.api.invoke !== 'function') {
+    throw new Error('桌面功能不可用：请从书签管理器桌面应用启动后再导入，勿直接在浏览器中打开开发地址或 HTML 文件')
+  }
+  return window.api
+}
 
 const viewMode = ref('grid')
 const gridClass = computed(() => 'grid-cols-[repeat(auto-fill,minmax(280px,1fr))]')
@@ -913,7 +902,33 @@ function handleBookmarkClick(bookmark, index) {
 
 // 快速分类菜单
 const quickMenu = ref({ visible: false, x: 0, y: 0, bookmarkId: null })
+const surfaceMenu = ref({ visible: false, x: 0, y: 0 })
+const surfaceMenuItems = computed(() => [
+  { id: 'new-bookmark', label: '新建书签', icon: '+', shortcut: 'Ctrl+N', action: onAdd },
+  { id: 'new-folder', label: '新建文件夹', icon: '□', action: onNewFolder },
+  { type: 'separator' },
+  { id: 'paste-url', label: '从剪贴板添加', icon: '⧉', action: openQuickAdd },
+  { id: 'refresh', label: '刷新书签图标', icon: '↻', action: refreshAllFavicons }
+])
+function onSurfaceContext(event) {
+  if (event.target.closest('[data-bookmark-card]')) return
+  surfaceMenu.value = { visible: true, x: event.clientX, y: event.clientY }
+}
+function onSurfaceMenuSelect(item) { item.action?.() }
 const quickCats = computed(() => cats.sorted.slice(0, 12))
+const bookmarkMenuItems = computed(() => [
+  { type: 'heading', label: '书签操作' },
+  ...quickCats.value.map((category, index) => ({ id: `category-${category.id}`, label: `移至 ${category.name}`, icon: category.icon || '□', shortcut: index < 9 ? String(index + 1) : '', action: () => quickAssign(category.id) })),
+  { type: 'separator' },
+  { id: 'copy-url', label: '复制 URL', icon: '⧉', shortcut: 'Ctrl+C', action: copyBookmarkUrl },
+  { id: 'copy-title', label: '复制标题', icon: 'T', action: copyBookmarkTitle },
+  { id: 'copy-markdown', label: '复制为 Markdown', icon: '⌁', action: copyAsMarkdown },
+  { id: 'new-window', label: '在新窗口打开', icon: '↗', action: openInNewWindow },
+  { type: 'separator' },
+  { id: 'qr', label: '生成二维码', icon: '⌘', action: showQrCode },
+  { id: 'tags', label: '管理标签', icon: '#', action: openTagManager }
+])
+function onBookmarkMenuSelect(item) { item.action?.() }
 
 // 批量操作
 const batchCatId = ref('')
@@ -1775,7 +1790,7 @@ function fetchMissingMetadata(bookmarkList) {
 async function importHtml() {
   importResult.value = { loading: true, source: '导入 HTML 书签' }
   let r
-  try { r = await window.api.invoke('io:importHtml') } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
+  try { r = await getDesktopApi().invoke('io:importHtml') } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
   importResult.value = null
   if (!r || r.canceled) return
   if (r.error) { showResult('导入失败', '❌', r.error); return }
@@ -1795,7 +1810,7 @@ async function importHtml() {
 async function importCsv() {
   importResult.value = { loading: true, source: '导入 CSV 书签' }
   let r
-  try { r = await window.api.invoke('io:importCsv') } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
+  try { r = await getDesktopApi().invoke('io:importCsv') } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
   importResult.value = null
   if (!r || r.canceled) return
   if (r.error) { showResult('导入失败', '❌', r.error); return }
@@ -1815,7 +1830,7 @@ async function importCsv() {
 async function importFromBrowser(b) {
   importResult.value = { loading: true, source: `从 ${b.name} 导入` }
   let r
-  try { r = await window.api.invoke('io:importFromBrowser', b.path) } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
+  try { r = await getDesktopApi().invoke('io:importFromBrowser', b.path) } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
   importResult.value = null
   if (!r) return
   if (r.error) { showResult('导入失败', '❌', r.error); return }
@@ -1855,7 +1870,7 @@ async function exportJson() {
 async function importJson() {
   importResult.value = { loading: true, source: '导入 JSON 备份' }
   let r
-  try { r = await window.api.invoke('io:importJson') } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
+  try { r = await getDesktopApi().invoke('io:importJson') } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
   importResult.value = null
   if (!r || r.canceled) return
   if (r.error) { showResult('导入失败', '❌', r.error); return }
@@ -1868,27 +1883,17 @@ async function importJson() {
 }
 
 async function exportStyledHtml() {
-  try {
-    const r = await window.api.invoke('io:exportStyledHtml')
-    if (r && r.html) {
-      const blob = new Blob([r.html], { type: 'text/html;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'bookmarks-' + new Date().toISOString().slice(0, 10) + '.html'
-      a.click()
-      URL.revokeObjectURL(url)
-      showResult('导出完成', '🌐', '已导出为带样式的网页文件', [`共 ${bm.stats.total} 个书签`])
-    }
-  } catch (e) {
-    showResult('错误', '❌', '导出失败: ' + (e.message || e))
-  }
+  let r
+  try { r = await window.api.invoke('io:exportStyledHtml') } catch (e) { showResult('错误', '❌', '导出失败: ' + (e.message || e)); return }
+  if (!r || r.canceled) return
+  if (r.error) { showResult('导出失败', '❌', r.error); return }
+  if (r.exported) showResult('导出完成', '🌐', '已导出为带样式的网页文件', [`文件: ${r.path}`, `共 ${bm.stats.total} 个书签`])
 }
 
 async function importPocketCsv() {
   importResult.value = { loading: true, source: '导入 Pocket 书签' }
   let r
-  try { r = await window.api.invoke('io:importPocketCsv') } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
+  try { r = await getDesktopApi().invoke('io:importPocketCsv') } catch(e) { importResult.value = null; showResult('错误', '❌', '导入失败: ' + (e.message||e)); return }
   importResult.value = null
   if (!r || r.canceled) return
   if (r.error) { showResult('导入失败', '❌', r.error); return }
@@ -1906,21 +1911,11 @@ async function importPocketCsv() {
 }
 
 async function exportMarkdown() {
-  try {
-    const r = await window.api.invoke('io:exportMarkdown')
-    if (r && r.markdown) {
-      const blob = new Blob([r.markdown], { type: 'text/markdown;charset=utf-8' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'bookmarks-' + new Date().toISOString().slice(0, 10) + '.md'
-      a.click()
-      URL.revokeObjectURL(url)
-      showResult('导出完成', '📝', '已导出为 Markdown 文件', [`共 ${bm.stats.total} 个书签`])
-    }
-  } catch (e) {
-    showResult('错误', '❌', '导出失败: ' + (e.message || e))
-  }
+  let r
+  try { r = await window.api.invoke('io:exportMarkdown') } catch (e) { showResult('错误', '❌', '导出失败: ' + (e.message || e)); return }
+  if (!r || r.canceled) return
+  if (r.error) { showResult('导出失败', '❌', r.error); return }
+  if (r.exported) showResult('导出完成', '📝', '已导出为 Markdown 文件', [`文件: ${r.path}`, `共 ${bm.stats.total} 个书签`])
 }
 </script>
 

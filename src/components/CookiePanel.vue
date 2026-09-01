@@ -50,7 +50,7 @@
                         <span v-if="c.session" class="chip">会话</span>
                       </td>
                       <td class="px-2 py-1.5 text-right">
-                        <button @click="revealVal(host, c.name)" class="text-xs hover:text-brand-500 mr-1">{{ revealed[host+'|'+c.name] ? '🙈':'👁️' }}</button>
+                        <button @click="revealVal(host, c.name)" class="text-xs hover:text-accent mr-1">{{ revealed[host+'|'+c.name] ? '🙈':'👁️' }}</button>
                         <button @click="del(host, c.name)" class="text-red-400 hover:text-red-600 text-xs">✕</button>
                       </td>
                     </tr>

@@ -1,7 +1,7 @@
 <template>
   <div class="h-screen flex flex-col bg-theme">
     <!-- 顶栏 -->
-    <div class="px-5 py-3 glass border-b border-white/30 dark:border-slate-700/50 flex items-center gap-3">
+    <div class="px-5 py-3 bg-[var(--surface-base)] border-b border-[var(--stroke-subtle)] flex items-center gap-3">
       <router-link to="/" custom v-slot="{ navigate }">
         <button @click="navigate" class="btn-ghost">← 返回</button>
       </router-link>

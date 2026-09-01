@@ -2,23 +2,140 @@ import https from 'node:https'
 import http from 'node:http'
 import { URL } from 'node:url'
 import net from 'node:net'
+import { Transform } from 'node:stream'
 import dns from 'node:dns/promises'
+import { execSync } from 'node:child_process'
 import { loadSettings } from './store.js'
 
-// 获取代理配置
+// 代理配置缓存（避免每次请求都读磁盘）
+let _proxyCache = null
+let _proxyCacheTime = 0
+const PROXY_CACHE_TTL = 30000  // 30秒缓存
+
+// 检测系统代理（Windows 注册表）
+function detectSystemProxy() {
+  try {
+    // 优先检查环境变量
+    const envProxy = process.env.HTTP_PROXY || process.env.http_proxy ||
+                     process.env.HTTPS_PROXY || process.env.https_proxy ||
+                     process.env.ALL_PROXY || process.env.all_proxy
+    if (envProxy) {
+      try {
+        const u = new URL(envProxy)
+        const type = u.protocol === 'socks5:' || u.protocol === 'socks:' ? 'socks5' : 'http'
+        console.log('[http] 检测到环境变量代理:', type, u.hostname + ':' + u.port)
+        return {
+          host: u.hostname,
+          port: parseInt(u.port) || (type === 'socks5' ? 1080 : 8080),
+          type,
+          username: decodeURIComponent(u.username || ''),
+          password: decodeURIComponent(u.password || '')
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Windows: 从注册表读取系统代理
+    if (process.platform === 'win32') {
+      const output = execSync(
+        'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable',
+        { encoding: 'utf-8', timeout: 3000 }
+      )
+      const enableMatch = output.match(/ProxyEnable\s+REG_DWORD\s+0x([0-9a-fA-F]+)/)
+      if (enableMatch && parseInt(enableMatch[1], 16) === 1) {
+        const serverOutput = execSync(
+          'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer',
+          { encoding: 'utf-8', timeout: 3000 }
+        )
+        const serverMatch = serverOutput.match(/ProxyServer\s+REG_SZ\s+(.+)/)
+        if (serverMatch) {
+          let proxyStr = serverMatch[1].trim()
+          // ProxyServer 可能格式：
+          //   "127.0.0.1:7890"  -- 所有协议共用
+          //   "http=127.0.0.1:7890;https=127.0.0.1:7890"  -- 分协议
+          let host = ''
+          let port = 8080
+          let type = 'http'
+
+          if (proxyStr.includes('=')) {
+            // 分协议格式，取 https 或 http
+            const parts = proxyStr.split(';')
+            const httpsPart = parts.find(p => p.startsWith('https='))
+            const httpPart = parts.find(p => p.startsWith('http='))
+            const socksPart = parts.find(p => p.startsWith('socks='))
+            const chosen = socksPart || httpsPart || httpPart
+            if (chosen) {
+              proxyStr = chosen.split('=')[1]
+              if (chosen.startsWith('socks')) type = 'socks5'
+            }
+          }
+
+          const colonIdx = proxyStr.lastIndexOf(':')
+          if (colonIdx > 0) {
+            host = proxyStr.substring(0, colonIdx)
+            port = parseInt(proxyStr.substring(colonIdx + 1)) || 8080
+          } else {
+            host = proxyStr
+          }
+
+          if (host) {
+            console.log('[http] 检测到系统代理:', type, host + ':' + port)
+            return { host, port, type, username: '', password: '' }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // 静默失败，不影响正常流程
+  }
+  return null
+}
+
+// 获取代理配置（带缓存）
+// 优先级：用户手动配置 > 系统代理 > 无代理
 function getProxyConfig() {
+  const now = Date.now()
+  if (_proxyCache !== undefined && _proxyCache !== null && (now - _proxyCacheTime) < PROXY_CACHE_TTL) {
+    return _proxyCache
+  }
+
   try {
     const s = loadSettings()
     const p = s.proxy
-    if (!p || !p.enabled || !p.host || !p.port) return null
-    return {
-      host: p.host,
-      port: parseInt(p.port) || 8080,
-      type: p.type || 'http',  // http | socks5
-      username: p.username || '',
-      password: p.password || ''
+    if (p && p.enabled && p.host && p.port) {
+      // 用户手动配置的代理，优先使用
+      _proxyCache = {
+        host: p.host,
+        port: parseInt(p.port) || 8080,
+        type: p.type || 'http',
+        username: p.username || '',
+        password: p.password || ''
+      }
+      _proxyCacheTime = now
+      console.log('[http] 使用用户配置代理:', _proxyCache.type, _proxyCache.host + ':' + _proxyCache.port)
+      return _proxyCache
     }
-  } catch { return null }
+
+    // 用户未配置代理，尝试检测系统代理
+    const sysProxy = detectSystemProxy()
+    if (sysProxy) {
+      _proxyCache = sysProxy
+      _proxyCacheTime = now
+      return _proxyCache
+    }
+
+    _proxyCache = null
+    _proxyCacheTime = now
+    return null
+  } catch (e) {
+    console.warn('[http] 获取代理配置失败:', e.message)
+    return null
+  }
+}
+
+// 外部可调用：清除代理缓存（设置变更时调用）
+export function clearProxyCache() {
+  _proxyCache = null
+  _proxyCacheTime = 0
 }
 
 // 统一请求：自动直连或走代理
@@ -347,13 +464,24 @@ export function downloadToStream(url, writable, { onProgress, timeout = 30000, h
     const safeResolve = (v) => { if (!settled) { settled = true; resolve(v) } }
     const safeReject = (e) => { if (!settled) { settled = true; reject(e) } }
 
+    // 只在第一次请求时读取代理配置，重定向时复用
+    const proxy = getProxyConfig()
+    console.log('[http] 下载开始 | 代理:', proxy ? proxy.type + '://' + proxy.host + ':' + proxy.port : '直连', '| URL:', url)
+
     const doDownload = (reqUrl) => {
       let u
       try { u = new URL(reqUrl) } catch { return safeReject(new Error('无效的下载 URL: ' + reqUrl)) }
 
-      const proxy = getProxyConfig()
       const useHttps = u.protocol === 'https:'
       const reqHeaders = { 'User-Agent': 'BookmarkManager-Updater', ...headers }
+
+      // 优化 socket 性能
+      const optimizeSocket = (socket) => {
+        if (socket) {
+          try { socket.setNoDelay(true) } catch { /* ignore */ }
+          try { socket.setKeepAlive(true) } catch { /* ignore */ }
+        }
+      }
 
       const onResp = (res) => {
         // 重定向
@@ -372,23 +500,32 @@ export function downloadToStream(url, writable, { onProgress, timeout = 30000, h
         let receivedBytes = 0
         let lastNotify = 0
 
-        res.on('data', (chunk) => {
-          receivedBytes += chunk.length
-          const now = Date.now()
-          if (onProgress && (now - lastNotify > 200 || receivedBytes === totalBytes)) {
-            lastNotify = now
-            onProgress({ receivedBytes, totalBytes })
+        // [FIX] 使用 Transform 流代替 res.on('data')，避免与 pipe 的背压冲突
+        // 之前的 res.on('data') + res.pipe(writable) 同时使用会破坏流的背压机制
+        // pipe 无法正确暂停源流，导致数据传输效率下降
+        const counter = new Transform({
+          transform(chunk, encoding, callback) {
+            receivedBytes += chunk.length
+            const now = Date.now()
+            if (onProgress && (now - lastNotify > 200 || receivedBytes === totalBytes)) {
+              lastNotify = now
+              onProgress({ receivedBytes, totalBytes })
+            }
+            callback(null, chunk)
           }
         })
 
-        // writable 被外部 destroy（取消下载）时，销毁响应流并 reject
+        // writable 被外部 destroy（取消下载）时，销毁所有流并 reject
         const onWritableClose = () => {
           try { res.destroy() } catch { /* ignore */ }
+          try { counter.destroy() } catch { /* ignore */ }
           safeReject(new Error('下载已取消'))
         }
         writable.once('close', onWritableClose)
 
-        res.pipe(writable)
+        // 使用 counter 作为中间流：res -> counter -> writable
+        // 这样 pipe 会正确处理每一级的背压
+        res.pipe(counter).pipe(writable)
 
         writable.on('finish', () => {
           writable.removeListener('close', onWritableClose)
@@ -397,6 +534,7 @@ export function downloadToStream(url, writable, { onProgress, timeout = 30000, h
         writable.on('error', (e) => {
           writable.removeListener('close', onWritableClose)
           try { res.destroy() } catch { /* ignore */ }
+          try { counter.destroy() } catch { /* ignore */ }
           safeReject(e)
         })
       }
@@ -412,17 +550,14 @@ export function downloadToStream(url, writable, { onProgress, timeout = 30000, h
         // 直连
         const lib = useHttps ? https : http
         const req = lib.get(u, { headers: reqHeaders, timeout }, (res) => {
-          // 禁用 Nagle 算法，减少小包延迟
-          if (res.socket) {
-            try { res.socket.setNoDelay(true) } catch { /* ignore */ }
-            try { res.socket.setKeepAlive(true) } catch { /* ignore */ }
-          }
+          optimizeSocket(res.socket)
           onResp(res)
         })
         attachReq(req)
       } else if (proxy.type === 'socks5') {
         // SOCKS5 代理
         socks5Connect(proxy, u, timeout).then((socket) => {
+          optimizeSocket(socket)
           const lib = useHttps ? https : http
           const req = lib.request({
             host: u.hostname, port: u.port || (useHttps ? 443 : 80),
@@ -437,6 +572,7 @@ export function downloadToStream(url, writable, { onProgress, timeout = 30000, h
         // HTTP 代理
         if (useHttps) {
           httpTunnelConnect(proxy, u, timeout).then((socket) => {
+            optimizeSocket(socket)
             const req = https.request({
               host: u.hostname, port: u.port || 443,
               path: u.pathname + u.search, method: 'GET',

@@ -1,15 +1,15 @@
 <template>
-  <div draggable="true"
+  <div data-bookmark-card draggable="true"
         @dragover.prevent="onDragOver" @dragleave="onDragLeave" @drop="onDrop"
        @dragstart="onDragStart" @dragend="onDragEnd"
        @mouseenter="onHover" @mouseleave="onLeave"
        @dblclick="onDblClick"
        @click.self="onClick"
        @contextmenu.prevent="onContext"
-    :class="['group relative rounded-2xl p-3.5 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card',
+    :class="['group relative rounded-lg p-3 cursor-pointer transition-all duration-150 hover:shadow-card',
              bmStore.isSelected(props.bm.id) ? 'ring-2 ring-accent bg-accent/5' : '',
              props.focused ? 'ring-2 ring-blue-400 bg-blue-50/50 dark:bg-blue-900/20' : '',
-             'glass border border-white/40 dark:border-slate-700/50 hover:border-brand-300',
+             'win-surface hover:border-accent/40',
              bm.status === 'dead' ? 'opacity-60' : '']">
     <!-- 置顶星标 -->
     <button @click.stop="bmStore.togglePin(props.bm.id)" class="absolute top-2.5 left-3 text-lg opacity-0 group-hover:opacity-100 transition-opacity z-10" :class="props.bm.pinned ? 'opacity-100' : ''" :title="props.bm.pinned ? '取消置顶' : '置顶'">
@@ -20,7 +20,7 @@
           :title="statusText"></span>
 
     <!-- 网页截图缩略图（有截图时显示为卡片顶部 banner） -->
-    <div v-if="screenshotUrl" class="relative -mx-3.5 -mt-3.5 mb-3 h-32 overflow-hidden rounded-t-2xl bg-slate-100 dark:bg-slate-800">
+    <div v-if="screenshotUrl" class="relative -mx-3 -mt-3 mb-3 h-32 overflow-hidden rounded-t-lg bg-slate-100 dark:bg-slate-800">
       <img :src="screenshotUrl" class="w-full h-full object-cover object-top" @error="onScreenshotError" loading="lazy" />
       <!-- 截图加载中遮罩 -->
       <div v-if="capturing" class="absolute inset-0 flex items-center justify-center bg-slate-200/60 dark:bg-slate-900/60">
@@ -79,9 +79,9 @@
     <!-- 悬浮操作 -->
     <div class="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
       <button @click.stop="toggleReadStatus" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-amber-500 hover:text-white text-xs shadow" :class="currentReadStatus === 'done' ? 'bg-green-100 dark:bg-green-900/40' : currentReadStatus === 'reading' ? 'bg-blue-100 dark:bg-blue-900/40' : ''" :title="readStatusTooltip">{{ readStatusIcon }}</button>
-      <button @click.stop="$emit('edit', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-brand-500 hover:text-white text-xs shadow" title="编辑">✏️</button>
-      <button @click.stop="$emit('validate', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-brand-500 hover:text-white text-xs shadow" title="重新校验">🩺</button>
-      <button @click.stop="$emit('geo', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-brand-500 hover:text-white text-xs shadow" title="服务器位置">📍</button>
+      <button @click.stop="$emit('edit', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-accent hover:text-white text-xs shadow" title="编辑">✏️</button>
+      <button @click.stop="$emit('validate', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-accent hover:text-white text-xs shadow" title="重新校验">🩺</button>
+      <button @click.stop="$emit('geo', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-accent hover:text-white text-xs shadow" title="服务器位置">📍</button>
       <button @click.stop="$emit('archive', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-amber-500 hover:text-white text-xs shadow" title="归档">📦</button>
       <button @click.stop="$emit('delete', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-red-500 hover:text-white text-xs shadow" title="删除">✕</button>
     </div>

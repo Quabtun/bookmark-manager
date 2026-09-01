@@ -17,7 +17,8 @@ import { performDeltaUpdate } from './delta-updater.js'
 const GITHUB_OWNER = 'Quantum-and-photon'
 const GITHUB_REPO = 'bookmark-manager'
 const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`
-const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+const GITHUB_API_LATEST = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+const GITHUB_API_LIST = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=10`
 
 // ============================================================
 // 暂存文件夹 —— 下载更新包到此目录，安装后自动清理
@@ -246,31 +247,60 @@ async function loadAutoUpdater() {
 // ============================================================
 async function checkGithubReleases() {
   try {
-    const resp = await requestWithTimeout(GITHUB_API_URL, {
-      method: 'GET',
-      timeout: 10000,
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'User-Agent': 'BookmarkManager-Updater'
+    // [FIX] 优先用 /releases 列表接口（包含 prerelease，CDN 缓存更短）
+    // 回退到 /releases/latest（仅非 prerelease，缓存更久）
+    let release = null
+    try {
+      const listResp = await requestWithTimeout(GITHUB_API_LIST, {
+        method: 'GET',
+        timeout: 10000,
+        headers: {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'BookmarkManager-Updater'
+        }
+      })
+      if (listResp.status === 200 && listResp.body) {
+        const releases = JSON.parse(listResp.body.toString())
+        if (Array.isArray(releases) && releases.length > 0) {
+          // 取第一个非 draft 的 release（列表已按 created_at 降序排列）
+          release = releases.find(r => !r.draft) || releases[0]
+        }
       }
-    })
-
-    if (resp.status !== 200 || !resp.body) {
-      lastError = `GitHub API 返回 ${resp.status}`
-      setState(STATE.ERROR)
-      return { error: lastError }
+    } catch (e) {
+      console.warn('[updater] /releases 列表请求失败，回退到 /releases/latest:', e.message)
     }
 
-    const release = JSON.parse(resp.body.toString())
+    if (!release) {
+      const resp = await requestWithTimeout(GITHUB_API_LATEST, {
+        method: 'GET',
+        timeout: 10000,
+        headers: {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'BookmarkManager-Updater'
+        }
+      })
+      if (resp.status !== 200 || !resp.body) {
+        lastError = `GitHub API 返回 ${resp.status}`
+        setState(STATE.ERROR)
+        return { error: lastError }
+      }
+      release = JSON.parse(resp.body.toString())
+    }
+
     const latestVersion = (release.tag_name || '').replace(/^v/, '')
     const currentVersion = app.getVersion()
     const hasUpdate = compareVersions(latestVersion, currentVersion) > 0
 
     const asset = pickBestAsset(release.assets)
+    if (!asset.url) {
+      lastError = '该 GitHub Release 未包含可下载的 Windows 安装包'
+      setState(STATE.ERROR)
+      return { error: lastError }
+    }
 
-    // 检测差分资产：查找 update-{oldVer}-{newVer}.delta
-    const deltaAsset = findDeltaAsset(release.assets, currentVersion, latestVersion)
-    const useDelta = !!(deltaAsset && isDeltaWorthIt(deltaAsset.size, asset.size) && app.isPackaged)
+    // [FIX] 禁用差分更新：没有生成 delta 文件，检测逻辑增加复杂度且可能误匹配
+    const deltaAsset = null
+    const useDelta = false
 
     updateInfo = {
       version: latestVersion,
@@ -331,6 +361,9 @@ function downloadToStaging(url, fileName, sessionId) {
     if (!isValidDownloadUrl(url)) {
       return reject(new Error('无效的下载 URL'))
     }
+
+    console.log('[updater] 开始下载更新包:', url)
+    console.log('[updater] 暂存路径:', STAGING_DIR)
 
     ensureStagingDir()
     const destPath = path.join(STAGING_DIR, fileName)
@@ -398,6 +431,16 @@ function downloadToStaging(url, fileName, sessionId) {
     }).then((result) => {
       // 下载完成，关闭文件流后重命名
       file.close(() => {
+        // [FIX] 验证下载文件大小
+        const actualSize = fs.statSync(tmpPath).size
+        const expectedSize = updateInfo?.downloadSize || 0
+        if (expectedSize > 0 && actualSize !== expectedSize) {
+          try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
+          console.error(`[updater] 下载文件大小不匹配: 期望 ${expectedSize}, 实际 ${actualSize}`)
+          return safeReject(new Error(`下载文件大小不匹配: 期望 ${expectedSize} 字节, 实际 ${actualSize} 字节`))
+        }
+        console.log(`[updater] 下载完成，文件大小验证通过: ${actualSize} 字节`)
+
         try {
           if (fs.existsSync(destPath)) fs.unlinkSync(destPath)
           fs.renameSync(tmpPath, destPath)

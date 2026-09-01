@@ -316,15 +316,17 @@ export const useBookmarksStore = defineStore('bookmarks', () => {
   // ---- 回收站操作 ----
   async function softDelete(id) {
     const i = bookmarks.value.findIndex(b => b.id === id)
-    if (i === -1) return
+    if (i === -1) return false
     const snapshot = JSON.parse(JSON.stringify(bookmarks.value[i]))
     const updated = await window.api.invoke('bm:update', id, { recycled: true, recycledAt: new Date().toISOString() })
     if (updated) {
       bookmarks.value[i] = { ...bookmarks.value[i], recycled: true, recycledAt: new Date().toISOString() }
       pushUndo({ type: 'delete', bookmarkId: id, data: snapshot })
+      return true
     }
+    window.$toast && window.$toast('移入回收站失败', 'error')
+    return false
   }
-
   async function restore(id) {
     const i = bookmarks.value.findIndex(b => b.id === id)
     if (i === -1) return

@@ -178,6 +178,15 @@ export async function performInstallInProcess({
     throw new Error(`无法复制新版本文件: ${e.message}`)
   }
 
+  // [FIX] 安装后验证：检查新文件大小是否与源文件一致
+  const newSize = fs.statSync(currentExePath).size
+  const srcSize = fs.statSync(downloadedFilePath).size
+  if (newSize !== srcSize) {
+    console.error(`[installer] 安装后文件大小不匹配: 期望 ${srcSize}, 实际 ${newSize}`)
+    throw new Error(`安装后文件大小不匹配: 期望 ${srcSize} 字节, 实际 ${newSize} 字节`)
+  }
+  console.log(`[installer] 安装验证通过: ${newSize} 字节`)
+
   onProgress({ step: 'installed', message: '文件安装完成' })
   return { ok: true, oldExePath }
 }

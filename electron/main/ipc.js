@@ -6,12 +6,12 @@ import {
   loadCategories, saveCategories,
   loadSettings, saveSettings,
   FILES, FAVICONS_DIR, IMAGES_DIR, DATA_DIR, DEFAULT_DATA_DIR,
-  getDataDir, setDataDir
+  getDataDir, setDataDir, saveDataDirPreference
 } from './store.js'
 import { startAutoBackup, stopAutoBackup, createBackupNow, listBackups } from './backup.js'
 import { createPreviewWindow, closePreviewWindow, listPreviewWindows, closeAllPreviewWindows, focusPreviewWindow } from './preview-windows.js'
 import { loadAllPlugins, unloadAllPlugins, getLoadedPlugins, loadPlugin, unloadPlugin, getPluginSettingsHtml, getPluginTabHtml, scanPlugins } from './plugins.js'
-import { requestWithTimeout } from './http.js'
+import { requestWithTimeout, clearProxyCache } from './http.js'
 import { validateUrl, validateBatch } from './validator.js'
 import { generatePreview, generateBatch, getPreview, previewImagePath, previewImageName, getImagesSize, enforceCacheLimit } from './crawler.js'
 import { fetchFavicon } from './favicon.js'
@@ -86,7 +86,23 @@ export function registerIpc() {
 
   // ---- 书签 ----
   safeHandle('bm:list', async () => loadBookmarks())
-  safeHandle('bm:save', async (_e, list) => { saveBookmarks(list); return true })
+  safeHandle('bm:save', async (_e, list) => {
+    if (!Array.isArray(list)) return { error: '书签数据格式无效' }
+    const current = loadBookmarks()
+    const currentById = new Map(current.map((bookmark) => [bookmark.id, bookmark]))
+    const serverFields = ['favicon', 'screenshot', 'previewHash', 'geo', 'whois']
+    const merged = list.map((bookmark) => {
+      const existing = currentById.get(bookmark?.id)
+      if (!existing) return bookmark
+      const result = { ...existing, ...bookmark }
+      for (const field of serverFields) {
+        if (existing[field] != null && bookmark[field] !== existing[field]) result[field] = existing[field]
+      }
+      return result
+    })
+    saveBookmarks(merged)
+    return true
+  })
 
   safeHandle('bm:add', async (_e, bookmark) => {
     // URL 验证：拒绝 javascript:、file: 等非 http/https 协议
@@ -258,7 +274,7 @@ export function registerIpc() {
 
   // ---- 分类环境 ----
   safeHandle('env:list', async () => listEnvironments())
-  safeHandle('env:create', async (_e, name) => createEnvironment(name))
+  safeHandle('env:create', async (_e, name, copyCurrent) => createEnvironment(name, copyCurrent))
   safeHandle('env:switch', async (_e, envId) => switchEnvironment(envId))
   safeHandle('env:mirror', async (_e, name) => mirrorEnvironment(name))
   safeHandle('env:delete', async (_e, envId) => deleteEnvironment(envId))
@@ -619,14 +635,14 @@ export function registerIpc() {
     return { imported: added, parsed: parsed.length, skipped }
   })
 
-  safeHandle('io:exportCategory', async (_e, categoryId, categories) => {
+  safeHandle('io:exportCategory', async (_e, categoryId) => {
     const allBookmarks = loadBookmarks()
-    const allCats = categories || loadCategories()
+    const allCats = loadCategories()
     // 递归收集所有子分类 ID
     const childIds = new Set([categoryId])
     function collectChildren(pid) {
       for (const c of allCats) {
-        if (c.parentId === pid) {
+        if (c.parentId === pid && !childIds.has(c.id)) {
           childIds.add(c.id)
           collectChildren(c.id)
         }
@@ -682,30 +698,61 @@ export function registerIpc() {
       properties: ['openFile']
     })
     if (res.canceled || !res.filePaths.length) return { imported: 0, canceled: true }
-    const raw = fs.readFileSync(res.filePaths[0], 'utf8')
+    let raw
     let data
     try {
+      raw = fs.readFileSync(res.filePaths[0], 'utf8').replace(/^\uFEFF/, '')
       data = JSON.parse(raw)
       if (!data || typeof data !== 'object') throw new Error('根节点不是对象')
       if (!Array.isArray(data.bookmarks)) throw new Error('缺少 bookmarks 数组')
+      if (data.categories !== undefined && !Array.isArray(data.categories)) throw new Error('categories 必须是数组')
     } catch (e) {
-      return { imported: 0, error: 'JSON 格式错误: ' + (e.message || '未知错误') }
+      return { imported: 0, error: 'JSON 文件读取或格式错误: ' + (e.message || '未知错误') }
     }
-    if (data.bookmarks) saveBookmarks(data.bookmarks)
+
+    const validBookmarks = data.bookmarks.reduce((result, bookmark) => {
+      if (!bookmark || typeof bookmark !== 'object' || typeof bookmark.url !== 'string' || !isValidHttpUrl(bookmark.url)) return result
+      result.push({
+        ...bookmark,
+        url: bookmark.url.trim(),
+        title: typeof bookmark.title === 'string' ? bookmark.title : bookmark.url,
+        description: typeof bookmark.description === 'string' ? bookmark.description : '',
+        notes: typeof bookmark.notes === 'string' ? bookmark.notes : '',
+        tags: Array.isArray(bookmark.tags) ? bookmark.tags.filter((tag) => typeof tag === 'string') : []
+      })
+      return result
+    }, [])
+    const skipped = data.bookmarks.length - validBookmarks.length
+    if (validBookmarks.length === 0 && data.bookmarks.length > 0) {
+      return { imported: 0, skipped, error: '备份中没有可导入的 http/https 书签' }
+    }
+
+    saveBookmarks(validBookmarks)
     if (Array.isArray(data.categories)) saveCategories(data.categories)
-    return { imported: data.bookmarks.length, categories: (data.categories || []).length }
+    return { imported: validBookmarks.length, categories: (data.categories || []).length, skipped }
   })
 
-  // ---- 导出为带样式的自包含 HTML ----
   safeHandle('io:exportStyledHtml', async () => {
-    const html = exportStyledHtml(loadBookmarks(), loadCategories())
-    return { html }
+    const res = await dialog.showSaveDialog(getMainWindow(), {
+      title: '导出带样式网页',
+      defaultPath: 'bookmarks.html',
+      filters: [{ name: 'HTML 文件', extensions: ['html'] }]
+    })
+    if (res.canceled || !res.filePath) return { exported: false, canceled: true }
+    fs.writeFileSync(res.filePath, exportStyledHtml(loadBookmarks(), loadCategories()), 'utf8')
+    return { exported: true, path: res.filePath }
   })
 
   // ---- 导出为 Markdown ----
   safeHandle('io:exportMarkdown', async () => {
-    const markdown = exportMarkdown(loadBookmarks(), loadCategories())
-    return { markdown }
+    const res = await dialog.showSaveDialog(getMainWindow(), {
+      title: '导出 Markdown',
+      defaultPath: 'bookmarks.md',
+      filters: [{ name: 'Markdown 文件', extensions: ['md', 'markdown'] }]
+    })
+    if (res.canceled || !res.filePath) return { exported: false, canceled: true }
+    fs.writeFileSync(res.filePath, exportMarkdown(loadBookmarks(), loadCategories()), 'utf8')
+    return { exported: true, path: res.filePath }
   })
 
   // ---- Pocket CSV 导入 ----
@@ -763,7 +810,9 @@ export function registerIpc() {
   // ---- 设置 ----
   safeHandle('settings:get', async () => loadSettings())
   safeHandle('proxy:detect', async () => {
-    const result = { found: false, host: '', port: '' }
+    const result = { found: false, host: '', port: '', type: 'http', source: '' }
+
+    // 1. 检查环境变量
     const httpProxy = process.env.HTTP_PROXY || process.env.http_proxy
     const httpsProxy = process.env.HTTPS_PROXY || process.env.https_proxy
     const allProxy = process.env.ALL_PROXY || process.env.all_proxy
@@ -774,14 +823,59 @@ export function registerIpc() {
         result.found = true
         result.host = u.hostname
         result.port = u.port || '8080'
+        result.type = (u.protocol === 'socks5:' || u.protocol === 'socks:') ? 'socks5' : 'http'
         result.source = '环境变量'
+        return result
       } catch { /* invalid URL */ }
     }
+
+    // 2. Windows 注册表检测系统代理
+    if (process.platform === 'win32') {
+      try {
+        const { execSync } = await import('node:child_process')
+        const output = execSync(
+          'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable',
+          { encoding: 'utf-8', timeout: 3000 }
+        )
+        const enableMatch = output.match(/ProxyEnable\s+REG_DWORD\s+0x([0-9a-fA-F]+)/)
+        if (enableMatch && parseInt(enableMatch[1], 16) === 1) {
+          const serverOutput = execSync(
+            'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer',
+            { encoding: 'utf-8', timeout: 3000 }
+          )
+          const serverMatch = serverOutput.match(/ProxyServer\s+REG_SZ\s+(.+)/)
+          if (serverMatch) {
+            let proxyStr = serverMatch[1].trim()
+            let type = 'http'
+            if (proxyStr.includes('=')) {
+              const parts = proxyStr.split(';')
+              const socksPart = parts.find(p => p.startsWith('socks='))
+              const httpsPart = parts.find(p => p.startsWith('https='))
+              const httpPart = parts.find(p => p.startsWith('http='))
+              const chosen = socksPart || httpsPart || httpPart
+              if (chosen) {
+                proxyStr = chosen.split('=')[1]
+                if (chosen.startsWith('socks')) type = 'socks5'
+              }
+            }
+            const colonIdx = proxyStr.lastIndexOf(':')
+            result.found = true
+            result.host = colonIdx > 0 ? proxyStr.substring(0, colonIdx) : proxyStr
+            result.port = colonIdx > 0 ? proxyStr.substring(colonIdx + 1) : '8080'
+            result.type = type
+            result.source = '系统代理'
+            return result
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
     return result
   })
 
   safeHandle('settings:save', async (_e, s) => {
     saveSettings(s)
+    clearProxyCache()  // 设置变更时清除代理缓存
     console.log('[settings:save] written to', FILES.settings)
     return true
   })
@@ -802,6 +896,7 @@ export function registerIpc() {
     if (ok) {
       resetCredentialCache()
       resetCookieCache()
+      saveDataDirPreference(getDataDir())
       saveSettings(loadSettings())
       return { ok: true, path: getDataDir() }
     }
@@ -811,6 +906,7 @@ export function registerIpc() {
     setDataDir(DEFAULT_DATA_DIR)
     resetCredentialCache()
     resetCookieCache()
+    saveDataDirPreference(DEFAULT_DATA_DIR)
     saveSettings(loadSettings())
     return { ok: true, path: getDataDir() }
   })

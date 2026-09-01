@@ -1,18 +1,19 @@
 import { app, BrowserWindow, shell, nativeTheme, globalShortcut, session, dialog } from 'electron'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { registerIpc, getMainWindow, setMainWindow } from './ipc.js'
-import { loadSettings, saveSettings, loadBookmarks, saveBookmarks, loadCategories, saveCategories } from './store.js'
+import { loadSettings, saveSettings, loadBookmarks, saveBookmarks, loadCategories, saveCategories, FILES } from './store.js'
 import { loadAllPlugins, unloadAllPlugins } from './plugins.js'
 import { createLockWindow, checkPassword } from './lockscreen.js'
 import { initUpdater, isDownloading, isInstalling, isInstallDone } from './updater.js'
 import { createUpdaterWindow, getUpdaterWindow, closeUpdaterWindow, registerUpdaterWindowIpc, focusUpdaterWindow } from './updater-window.js'
 
-// 确保首次启动时数据文件存在
+// 仅在数据文件不存在时创建默认文件；已有文件即使损坏也不覆盖，避免启动时清空用户数据
 try {
-  saveSettings(loadSettings())
-  saveCategories(loadCategories())
-  saveBookmarks(loadBookmarks())
+  if (!fs.existsSync(FILES.settings)) saveSettings(loadSettings())
+  if (!fs.existsSync(FILES.categories)) saveCategories(loadCategories())
+  if (!fs.existsSync(FILES.bookmarks)) saveBookmarks(loadBookmarks())
 } catch (e) { console.error('init save error:', e) }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -93,7 +94,7 @@ function createMainWindow() {
     minHeight: 640,
     show: false,
     backgroundColor: '#f8fafc',
-    title: '书签管理器 v1.4.7-test',
+    title: `书签管理器 v${app.getVersion()}`,
     autoHideMenuBar: true,
     fullscreenable: false,
     webPreferences: {

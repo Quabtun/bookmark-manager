@@ -1,12 +1,12 @@
 <template>
   <div class="shrink-0 flex select-none relative">
-  <aside class="glass border-r border-white/30 dark:border-slate-700/50 flex flex-col select-none" :style="{ width: sidebarWidth + 'px' }">
+  <aside class="bg-[var(--surface-subtle)] border-r border-[var(--stroke-subtle)] flex flex-col select-none backdrop-blur-xl" :style="{ width: sidebarWidth + 'px' }">
     <!-- 拖拽手柄 -->
     <div class="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/30 transition-colors z-10"
          @mousedown.prevent="startDrag"></div>
     <!-- Logo -->
-    <div class="px-4 py-3.5 flex items-center gap-2.5 border-b border-slate-200/30 dark:border-slate-700/50">
-      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-accent flex items-center justify-center text-white text-base" style="--tw-gradient-from: var(--accent-400); --tw-gradient-to: var(--accent-600)">★</div>
+    <div class="px-4 py-3 flex items-center gap-2.5 border-b border-[var(--stroke-subtle)]">
+      <div class="w-8 h-8 rounded-md bg-accent flex items-center justify-center text-white text-base shadow-sm">★</div>
       <div class="leading-tight">
         <div class="font-semibold text-sm">书签管理器</div>
         <div class="text-[10px] text-slate-400">{{ bm.stats.total }} 个书签</div>
@@ -86,21 +86,18 @@
         <span>🗑️</span><span>回收站</span>
         <span v-if="bm.recycledCount > 0" class="ml-auto text-[10px] bg-red-500 text-white px-1.5 py-0.5 rounded-full">{{ bm.recycledCount }}</span>
       </button>
-      <router-link to="/categorize" custom v-slot="{ navigate }">
-        <button @click="navigate" class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-200/60 dark:hover:bg-slate-700/50">
-          <span>🗂️</span><span>分类与导入导出</span>
-        </button>
-      </router-link>
-      <router-link to="/settings" custom v-slot="{ navigate }">
-        <button @click="navigate" class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-200/60 dark:hover:bg-slate-700/50">
-          <span>⚙️</span><span>设置</span>
-        </button>
-      </router-link>
-      <router-link to="/stats" custom v-slot="{ navigate }">
-        <button @click="navigate" class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-200/60 dark:hover:bg-slate-700/50">
-          <span>📊</span><span>统计</span>
-        </button>
-      </router-link>
+      <button @click="router.push('/categorize')" class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-200/60 dark:hover:bg-slate-700/50">
+        <span>🗂️</span><span>分类与导入导出</span>
+      </button>
+      <button @click="router.push('/settings')" class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-200/60 dark:hover:bg-slate-700/50">
+        <span>⚙️</span><span>设置</span>
+      </button>
+      <button @click="router.push('/stats')" class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-200/60 dark:hover:bg-slate-700/50">
+        <span>📊</span><span>统计</span>
+      </button>
+      <div class="text-center text-[10px] text-slate-400 dark:text-slate-500 pt-1 pb-0.5">
+        v{{ appVersion }}
+      </div>
     </div>
 
     <!-- 重命名弹窗 -->
@@ -117,17 +114,14 @@
       </div>
     </teleport>
 
-    <!-- 文件夹右键菜单 -->
-    <teleport to="body">
-      <div v-if="contextMenu.visible" class="fixed z-[350] w-40 glass rounded-xl shadow-glass py-1 animate-pop"
-           :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }" @click.stop>
-        <button @click="exportCategory(contextMenu.node); closeContextMenu()" class="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-slate-700">📤 导出文件夹</button>
-        <button @click="startRename(contextMenu.node)" class="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-slate-700">✏️ 重命名</button>
-        <button @click="duplicateCategory(contextMenu.node); closeContextMenu()" class="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-slate-700">📋 复制文件夹</button>
-        <div class="border-t border-slate-200/50 dark:border-slate-700/50 my-0.5"></div>
-        <button @click="deleteCategory(contextMenu.node); closeContextMenu()" class="w-full text-left px-3 py-1.5 text-xs hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500">🗑️ 删除</button>
-      </div>
-    </teleport>
+    <ContextMenu
+      :open="contextMenu.visible"
+      :x="contextMenu.x"
+      :y="contextMenu.y"
+      :items="categoryMenuItems"
+      @close="closeContextMenu"
+      @select="onCategoryMenuSelect"
+    />
 
     <!-- 分类环境管理 -->
     <CategoryEnvManager v-model="showEnvManager" @switched="onEnvSwitched" />
@@ -137,20 +131,40 @@
 
 <script setup>
 import { ref, computed, defineComponent, h, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useBookmarksStore } from '../stores/bookmarks.js'
 import { useCategoriesStore } from '../stores/categories.js'
 import { useSettingsStore } from '../stores/settings.js'
 import CategoryEnvManager from './CategoryEnvManager.vue'
+import ContextMenu from './ContextMenu.vue'
 
 const emit = defineEmits(['manageCategories', 'newFolder', 'openCredentials', 'openCookies', 'openSnapshots', 'openPlugins', 'newSmartFolder', 'openRecycle', 'closeRecycle', 'openArchive', 'closeArchive'])
 
+const router = useRouter()
 const bm = useBookmarksStore()
 const cats = useCategoriesStore()
 const settingsStore = useSettingsStore()
 const contextMenu = ref({ visible: false, x: 0, y: 0, node: null })
+const categoryMenuItems = computed(() => {
+  const node = contextMenu.value.node
+  if (!node) return []
+  return [
+    { type: 'heading', label: node.name },
+    { id: 'open', label: '打开分类', icon: '□', action: () => { bm.activeCategory = node.id } },
+    { id: 'new-child', label: '新建子分类', icon: '+', action: () => { bm.activeCategory = node.id; emit('newFolder') } },
+    { id: 'export', label: '导出文件夹', icon: '↗', action: () => exportCategory(node) },
+    { type: 'separator' },
+    { id: 'rename', label: '重命名', icon: '✎', shortcut: 'F2', action: () => startRename(node) },
+    { id: 'duplicate', label: '复制文件夹', icon: '⧉', action: () => duplicateCategory(node) },
+    { type: 'separator' },
+    { id: 'delete', label: '删除', icon: '×', danger: true, action: () => deleteCategory(node) }
+  ]
+})
+function onCategoryMenuSelect(item) { item.action?.() }
 const renameDialog = ref({ visible: false, node: null, name: '' })
 const showEnvManager = ref(false)
 const currentEnvName = ref('默认环境')
+const appVersion = ref('')
 
 // 智能文件夹
 const smartFolders = computed(() => settingsStore.settings.smartFolders || [])
@@ -174,7 +188,15 @@ async function onEnvSwitched() {
 
 onMounted(() => {
   loadEnvName()
+  loadAppVersion()
 })
+
+async function loadAppVersion() {
+  try {
+    const info = await window.api.invoke('updater:version')
+    appVersion.value = info.version || ''
+  } catch { /* ignore */ }
+}
 
 function getSmartFolderCount(folderId) {
   return bm.smartFolderResults(folderId).length
@@ -237,7 +259,7 @@ function closeContextMenu() {
 
 function exportCategory(node) {
   closeContextMenu()
-  window.api.invoke('io:exportCategory', node.id, cats.categories).then((r) => {
+  window.api.invoke('io:exportCategory', node.id).then((r) => {
     if (r && r.exported) window.$toast(`已导出「${node.name}」(${r.count}个书签)`, 'success')
     else if (r && !r.canceled) window.$toast('导出失败: ' + (r.error || ''), 'warn')
   }).catch((e) => { window.$toast('导出失败: ' + (e.message || e), 'error') })

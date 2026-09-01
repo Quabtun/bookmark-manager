@@ -14,7 +14,7 @@
             <div class="relative">
               <label class="text-xs text-slate-500 flex items-center gap-2">
                 <span>URL *</span>
-                <span v-if="fetching" class="text-brand-500 animate-pulse text-[11px]">⏳ 抓取中…</span>
+                <span v-if="fetching" class="text-accent animate-pulse text-[11px]">⏳ 抓取中…</span>
                 <span v-if="fetchOk" class="text-green-500 text-[11px]">✅ 已获取</span>
               </label>
               <input v-model="form.url" @blur="onUrlBlur" @keydown.enter.prevent="onUrlBlur" @input="onUrlInput"
@@ -56,9 +56,9 @@
                 <div class="input mt-1 flex flex-wrap items-center gap-1 min-h-[36px] cursor-text"
                      @click="tagInputRef && tagInputRef.focus()">
                   <span v-for="(t, i) in form.tags" :key="i"
-                        class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md text-xs font-medium bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
+                        class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md text-xs font-medium bg-accent-50 text-accent dark:bg-accent-50 dark:text-accent">
                     #{{ t }}
-                    <button @click.stop="removeTag(i)" class="ml-0.5 text-brand-500 hover:text-red-500 leading-none">×</button>
+                    <button @click.stop="removeTag(i)" class="ml-0.5 text-accent hover:text-red-500 leading-none">×</button>
                   </span>
                   <input ref="tagInputRef" v-model="tagInput" @keydown.enter.prevent="addTag"
                          @keydown.backspace="onTagBackspace"

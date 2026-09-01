@@ -1,5 +1,5 @@
 <template>
-  <div class="h-screen flex flex-col bg-theme text-slate-800 dark:text-slate-100">
+  <div class="h-screen flex flex-col bg-theme text-[var(--text-primary)]">
     <!-- 校验/预览进度条（右下角浮动卡片，可折叠） -->
     <Transition name="progress-fade">
       <!-- 展开状态 -->
@@ -43,10 +43,10 @@
     <router-view />
 
     <!-- 全局通知 -->
-    <div class="fixed bottom-5 right-5 z-50 flex flex-col gap-2">
+    <div class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex w-[min(92vw,420px)] flex-col gap-2 md:left-auto md:right-5 md:translate-x-0 md:w-auto">
       <transition-group name="toast">
         <div v-for="t in toasts" :key="t.id"
-             class="glass shadow-glass rounded-xl px-4 py-2.5 text-sm flex items-center gap-2 min-w-[200px]">
+             class="glass shadow-glass rounded-xl px-4 py-2.5 text-sm flex items-center gap-2 w-full md:min-w-[200px] md:w-auto">
           <span :class="toastIconClass(t.type)">{{ toastIcon(t.type) }}</span>
           <span>{{ t.msg }}</span>
         </div>

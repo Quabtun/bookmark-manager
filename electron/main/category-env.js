@@ -10,7 +10,7 @@ const ENV_FILE = path.join(DATA_DIR, 'category-environments.json')
 // 环境数据结构：
 // {
 //   environments: [
-//     { id, name, categories: [...], bookmarkMappings: { bookmarkId: categoryId }, createdAt }
+//     { id, name, categories: [...], bookmarkMappings: { bookmarkId: { categoryId, manualSet } }, createdAt }
 //   ],
 //   currentEnvId: 'xxx'
 // }
@@ -36,7 +36,12 @@ export function ensureDefaultEnvironment() {
     const bookmarks = loadBookmarks()
     const mappings = {}
     for (const bm of bookmarks) {
-      if (bm.categoryId) mappings[bm.id] = bm.categoryId
+      if (bm.categoryId) {
+        mappings[bm.id] = {
+          categoryId: bm.categoryId,
+          manualSet: !!bm.manualSet
+        }
+      }
     }
     const defaultEnv = {
       id: 'env-default-' + Date.now(),
@@ -57,23 +62,31 @@ export function ensureDefaultEnvironment() {
   return data
 }
 
-// 创建新环境（空分类）
-export function createEnvironment(name) {
+// 创建新环境
+// copyCurrent 为 true 时复制当前环境的分类（类似镜像但不复制书签映射）
+export function createEnvironment(name, copyCurrent = false) {
   ensureDefaultEnvironment()
   const data = loadEnvironments()
+
+  let categories = []
+  if (copyCurrent) {
+    // 从当前环境复制分类
+    categories = JSON.parse(JSON.stringify(loadCategories()))
+  }
+
   const newEnv = {
     id: 'env-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
     name: name || '新环境',
-    categories: [],
+    categories,
     bookmarkMappings: {},
     createdAt: Date.now()
   }
   data.environments.push(newEnv)
   saveEnvironments(data)
-  return newEnv
+  return { ok: true, env: newEnv }
 }
 
-// 切换环境：保存当前 → 加载目标
+// 切换环境：保存当前 -> 加载目标
 export function switchEnvironment(envId) {
   const data = loadEnvironments()
   const targetEnv = data.environments.find(e => e.id === envId)
@@ -87,7 +100,12 @@ export function switchEnvironment(envId) {
     const bookmarks = loadBookmarks()
     const mappings = {}
     for (const bm of bookmarks) {
-      if (bm.categoryId) mappings[bm.id] = bm.categoryId
+      if (bm.categoryId) {
+        mappings[bm.id] = {
+          categoryId: bm.categoryId,
+          manualSet: !!bm.manualSet
+        }
+      }
     }
     currentEnv.bookmarkMappings = mappings
   }
@@ -103,14 +121,27 @@ export function switchEnvironment(envId) {
   const bookmarks = loadBookmarks()
   const mappings = targetEnv.bookmarkMappings || {}
   for (const bm of bookmarks) {
-    const catId = mappings[bm.id] || null
-    bm.categoryId = catId
-    bm.manualCategoryId = catId
-    bm.manualSet = !!catId
+    const mapping = mappings[bm.id]
+    if (mapping && typeof mapping === 'object') {
+      // 新格式：{ categoryId, manualSet }
+      bm.categoryId = mapping.categoryId || null
+      bm.manualCategoryId = mapping.categoryId || null
+      bm.manualSet = !!mapping.manualSet
+    } else if (mapping) {
+      // 旧格式兼容：mapping 直接是 categoryId 字符串
+      bm.categoryId = mapping
+      bm.manualCategoryId = mapping
+      bm.manualSet = false
+    } else {
+      // 无映射：清除分类
+      bm.categoryId = null
+      bm.manualCategoryId = null
+      bm.manualSet = false
+    }
   }
   saveBookmarks(bookmarks)
 
-  return { ok: true, env: targetEnv }
+  return { ok: true, env: { id: targetEnv.id, name: targetEnv.name } }
 }
 
 // 镜像环境：复制当前环境（含分类和书签映射）创建新环境
@@ -125,7 +156,12 @@ export function mirrorEnvironment(newName) {
   const bookmarks = loadBookmarks()
   const currentMappings = {}
   for (const bm of bookmarks) {
-    if (bm.categoryId) currentMappings[bm.id] = bm.categoryId
+    if (bm.categoryId) {
+      currentMappings[bm.id] = {
+        categoryId: bm.categoryId,
+        manualSet: !!bm.manualSet
+      }
+    }
   }
 
   const newEnv = {

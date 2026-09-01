@@ -1,5 +1,5 @@
 <template>
-  <div class="px-5 py-3 flex items-center gap-3 glass border-b border-white/30 dark:border-slate-700/50">
+  <div class="px-5 py-3 flex items-center gap-3 border-b border-[var(--stroke-subtle)] bg-[var(--surface-base)] backdrop-blur-xl">
     <!-- 搜索 -->
     <div class="relative flex-1 max-w-md">
       <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
