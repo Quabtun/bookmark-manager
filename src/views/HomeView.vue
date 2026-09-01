@@ -32,6 +32,8 @@
         v-model:ui_viewMode="viewMode"
         :search-history="searchHistory"
         :show-search-suggestions="showSearchSuggestions"
+        :batch-running="ui.isBatchRunning"
+        :batch-kind="ui.batchProgress.kind"
         @add="onAdd"
         @validate-all="validateAll"
         @load-all-previews="loadAllPreviews"
@@ -1613,24 +1615,31 @@ async function onDeleteCard(b) {
 
 // ---- 批量操作 ----
 async function validateAll() {
-  if (bm.bookmarks.length === 0) return window.$toast('没有书签可校验', 'warn')
-  window.$toast(`开始校验 ${bm.bookmarks.length} 个书签…`, 'info')
-  ui.batchProgress = { active: true, kind: 'validate', done: 0, total: bm.bookmarks.length }
+  if (ui.isBatchRunning) return window.$toast('已有批量任务正在进行，请等待完成', 'warn')
+  const list = bm.bookmarks.filter((b) => !b.recycled && !b.archived)
+  if (list.length === 0) return window.$toast('没有书签可校验', 'warn')
+
+  window.$toast(`开始校验 ${list.length} 个书签…`, 'info')
+  ui.startBatchProgress('validate', list.length)
   try {
     // 必须用深拷贝脱离 Vue Proxy，否则 IPC 序列化可能丢数据
-    const urls = JSON.parse(JSON.stringify(bm.bookmarks.map((b) => b.url)))
+    const urls = JSON.parse(JSON.stringify(list.map((b) => b.url)))
     const results = await window.api.invoke('validate:batch', urls)
     if (!results || results.error) {
-      ui.batchProgress.active = false
+      ui.stopBatchProgress('validate')
       window.$toast('校验失败: ' + (results?.error || '未知错误'), 'error')
       return
     }
+
     let ok = 0, dead = 0, warn = 0, redirect = 0, unknown = 0
-    for (let i = 0; i < bm.bookmarks.length; i++) {
+    for (let i = 0; i < list.length; i++) {
       const r = results[i]
-      const b = bm.bookmarks[i]
+      const bookmarkId = list[i].id
+      const index = bm.bookmarks.findIndex((b) => b.id === bookmarkId)
+      if (index === -1) continue
+      const b = bm.bookmarks[index]
       if (r && r.status) {
-        bm.bookmarks[i] = { ...b, status: r.status, statusCheckedAt: Date.now() }
+        bm.bookmarks[index] = { ...b, status: r.status, statusCheckedAt: Date.now() }
         if (r.status === 'ok') ok++
         else if (r.status === 'dead') dead++
         else if (r.status === 'warn') warn++
@@ -1638,16 +1647,16 @@ async function validateAll() {
         else unknown++
       } else {
         console.warn('[validateAll] 第', i, '个书签校验结果异常:', r, 'URL:', urls[i])
-        bm.bookmarks[i] = { ...b, status: 'unknown', statusCheckedAt: Date.now() }
+        bm.bookmarks[index] = { ...b, status: 'unknown', statusCheckedAt: Date.now() }
         unknown++
       }
     }
     await bm.persistAll()
-    setTimeout(() => { ui.batchProgress.active = false }, 600)
+    ui.finishBatchProgress('validate')
     window.$toast(`校验完成: ✅${ok} 💀${dead} ⚠️${warn} 🔁${redirect}` + (unknown > 0 ? ` ❓${unknown}` : ''), 'success')
     addNotification(`校验完成: ✅${ok} 💀${dead} ⚠️${warn} 🔁${redirect}`, 'success')
   } catch (e) {
-    ui.batchProgress.active = false
+    ui.stopBatchProgress('validate')
     window.$toast('校验异常: ' + (e.message || e), 'error')
     addNotification('校验异常: ' + (e.message || e), 'error')
     console.error('[validateAll] 异常:', e)
@@ -1655,15 +1664,27 @@ async function validateAll() {
 }
 
 async function loadAllPreviews() {
-  if (bm.bookmarks.length === 0) return window.$toast('没有书签', 'warn')
-  window.$toast(`开始加载 ${bm.bookmarks.length} 个预览…`, 'info')
-  const urls = bm.bookmarks.map((b) => b.url)
-  await window.api.invoke('preview:batch', urls)
-  // 清除前端缓存，下次悬停从磁盘读取最新预览
-  ui.clearPreview()
-  refreshCacheSize()
-  window.$toast('预览加载完成', 'success')
-  addNotification('预览加载完成', 'success')
+  if (ui.isBatchRunning) return window.$toast('已有批量任务正在进行，请等待完成', 'warn')
+  const list = bm.bookmarks.filter((b) => !b.recycled && !b.archived)
+  if (list.length === 0) return window.$toast('没有书签可加载预览', 'warn')
+
+  window.$toast(`开始加载 ${list.length} 个预览…`, 'info')
+  ui.startBatchProgress('preview', list.length)
+  try {
+    const urls = JSON.parse(JSON.stringify(list.map((b) => b.url)))
+    const result = await window.api.invoke('preview:batch', urls)
+    if (result?.error) throw new Error(result.error)
+    ui.clearPreview()
+    refreshCacheSize()
+    ui.finishBatchProgress('preview')
+    window.$toast('预览加载完成', 'success')
+    addNotification('预览加载完成', 'success')
+  } catch (e) {
+    ui.stopBatchProgress('preview')
+    window.$toast('预览异常: ' + (e.message || e), 'error')
+    addNotification('预览异常: ' + (e.message || e), 'error')
+    console.error('[loadAllPreviews] 异常:', e)
+  }
 }
 
 async function autoClassify() {

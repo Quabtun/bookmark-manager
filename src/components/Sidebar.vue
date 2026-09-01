@@ -15,7 +15,7 @@
 
     <!-- 顶部固定导航 -->
     <nav class="px-2 py-1.5 space-y-0.5">
-      <button @click="bm.activeCategory = 'all'"
+      <button @click="selectCategory('all')"
               :class="['w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm transition',
                        bm.activeCategory === 'all' ? 'bg-accent text-white' : 'hover:bg-slate-200/60 dark:hover:bg-slate-700/50']">
         <span class="text-base">📑</span><span class="flex-1 text-left">所有书签</span>
@@ -150,7 +150,7 @@ const categoryMenuItems = computed(() => {
   if (!node) return []
   return [
     { type: 'heading', label: node.name },
-    { id: 'open', label: '打开分类', icon: '□', action: () => { bm.activeCategory = node.id } },
+    { id: 'open', label: '打开分类', icon: '□', action: () => selectCategory(node.id) },
     { id: 'new-child', label: '新建子分类', icon: '+', action: () => { bm.activeCategory = node.id; emit('newFolder') } },
     { id: 'export', label: '导出文件夹', icon: '↗', action: () => exportCategory(node) },
     { type: 'separator' },
@@ -202,8 +202,14 @@ function getSmartFolderCount(folderId) {
   return bm.smartFolderResults(folderId).length
 }
 
-function onSmartFolderClick(sf) {
-  bm.activeCategory = 'smart:' + sf.id
+  function selectCategory(categoryId) {
+    bm.showRecycled = false
+    bm.showArchived = false
+    bm.activeCategory = categoryId
+  }
+
+  function onSmartFolderClick(sf) {
+    selectCategory('smart:' + sf.id)
   bm.searchQuery = sf.query || ''
   bm.statusFilter = sf.statusFilter || 'all'
   bm.tagFilter = sf.tagFilter || ''
@@ -347,7 +353,7 @@ const TreeNode = defineComponent({
                 bm.activeCategory === props.node.id ? 'bg-accent text-white' : 'hover:bg-slate-200/60 dark:hover:bg-slate-700/50',
                 dragOver.value ? 'ring-2 ring-accent' : ''],
         style: { paddingLeft: (props.depth * 14 + 4) + 'px' },
-        onClick: () => bm.activeCategory = props.node.id,
+        onClick: () => selectCategory(props.node.id),
         onDragstart: onDragStart,
         onDragover: (e) => { e.preventDefault(); dragOver.value = true },
         onDragleave: () => { dragOver.value = false },

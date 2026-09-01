@@ -97,12 +97,10 @@ onMounted(async () => {
     window.dispatchEvent(new CustomEvent('favicon-updated', { detail: { id, favicon } }))
   }))
   offs.push(window.api.on('validate:progress', (p) => {
-    ui.batchProgress = { active: true, kind: 'validate', ...p }
-    if (p.done >= p.total) setTimeout(() => { ui.batchProgress.active = false }, 600)
+    ui.updateBatchProgress('validate', p)
   }))
   offs.push(window.api.on('preview:progress', (p) => {
-    ui.batchProgress = { active: true, kind: 'preview', ...p }
-    if (p.done >= p.total) setTimeout(() => { ui.batchProgress.active = false }, 600)
+    ui.updateBatchProgress('preview', p)
   }))
 })
 onUnmounted(() => offs.forEach((f) => f && f()))
