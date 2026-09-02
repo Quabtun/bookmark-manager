@@ -11,8 +11,8 @@ extraResources:
     to: licenses/maxmind/LICENSE
 publish:
   provider: github
-  owner: Quantum-and-photon
-  repo: bookmark-manager
+  owner: Quabtun
+  repo: bookmark-manager-releases
   releaseType: release
 win:
   target:

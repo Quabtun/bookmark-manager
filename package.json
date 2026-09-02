@@ -2,11 +2,11 @@
   "name": "bookmark-manager",
   "version": "1.4.23",
   "description": "本地书签管理器 - 纯本地、安全、自动校验与分类",
-  "author": "Quantum-and-photon",
+  "author": "Quabtun",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Quantum-and-photon/bookmark-manager.git"
+    "url": "https://github.com/Quabtun/bookmark-manager.git"
   },
   "main": "dist-electron/main/index.js",
   "type": "module",

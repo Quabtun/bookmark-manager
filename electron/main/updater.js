@@ -14,8 +14,8 @@ import { performDeltaUpdate } from './delta-updater.js'
 // ============================================================
 // GitHub 仓库配置
 // ============================================================
-const GITHUB_OWNER = 'Quantum-and-photon'
-const GITHUB_REPO = 'bookmark-manager'
+const GITHUB_OWNER = 'Quabtun'
+const GITHUB_REPO = 'bookmark-manager-releases'
 const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`
 const GITHUB_API_LATEST = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
 const GITHUB_API_LIST = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=10`

@@ -1,4 +1,4 @@
-name: Publish Windows Release
+name: Publish Public Release
 
 on:
   push:
@@ -6,14 +6,13 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  publish:
+  build-and-publish:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout source
+      - name: Checkout private source
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -33,15 +32,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run updater tests
+      - name: Run tests
         run: npm test
 
       - name: Build portable Windows package
         run: npm run build
 
-      - name: Publish GitHub Release
+      - name: Publish files to public repository
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          repository: Quabtun/bookmark-manager-releases
+          token: ${{ secrets.RELEASES_REPO_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Bookmark Manager ${{ github.ref_name }}
+          body: |
+            ## 修复
+            - 修复点击父分类文件夹时未显示子文件夹书签的问题。
+            - 校验与预览任务改为独立执行，可同时运行。
+            - 进度面板可同时展示校验与预览进度，操作按钮仅在对应任务运行时禁用。
+
+            ## 验证
+            - npm test：通过。
+            - Windows x64 便携版已构建。
+          generate_release_notes: false
           fail_on_unmatched_files: true
           files: release7/BookmarkManager-*-portable.exe
