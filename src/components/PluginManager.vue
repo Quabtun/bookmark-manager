@@ -17,15 +17,16 @@
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2">
                   <span class="font-medium text-sm">{{ p.name }}</span>
-                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">v{{ p.version }}</span>
+                  <span v-if="p.blocked" class="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">已禁用</span>
+                  <span v-else class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">已启用</span>
                 </div>
-                <p class="text-xs text-slate-500 mt-0.5">{{ p.description }}</p>
+                <p v-if="p.blocked" class="text-xs text-amber-600 dark:text-amber-400 mt-1">{{ p.blockedReason }}</p>
                 <div class="flex gap-2 mt-2">
-                  <button v-if="p.hasSettings" @click="openSettings(p.id)"
+                  <button v-if="!p.blocked && p.hasSettings" @click="openSettings(p.id)"
                           class="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
                     ⚙️ 设置
                   </button>
-                  <button v-if="p.hasTab" @click="openTab(p.id)"
+                  <button v-if="!p.blocked && p.hasTab" @click="openTab(p.id)"
                           class="text-xs px-2 py-0.5 rounded bg-accent/10 text-accent hover:bg-accent/20 transition">
                     📑 打开面板
                   </button>

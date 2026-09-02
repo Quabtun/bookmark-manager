@@ -10,7 +10,7 @@ import {
 } from './store.js'
 import { startAutoBackup, stopAutoBackup, createBackupNow, listBackups } from './backup.js'
 import { createPreviewWindow, closePreviewWindow, listPreviewWindows, closeAllPreviewWindows, focusPreviewWindow } from './preview-windows.js'
-import { loadAllPlugins, unloadAllPlugins, getLoadedPlugins, loadPlugin, unloadPlugin, getPluginSettingsHtml, getPluginTabHtml, scanPlugins } from './plugins.js'
+import { loadAllPlugins, unloadAllPlugins, getLoadedPlugins, getPluginStatus, loadPlugin, unloadPlugin, getPluginSettingsHtml, getPluginTabHtml, scanPlugins } from './plugins.js'
 import { requestWithTimeout, clearProxyCache } from './http.js'
 import { validateUrl, validateBatch } from './validator.js'
 import { generatePreview, generateBatch, getPreview, previewImagePath, previewImageName, getImagesSize, enforceCacheLimit } from './crawler.js'
@@ -65,10 +65,32 @@ function safeHandle(channel, handler) {
 
 // URL 验证工具函数：只允许 http/https 协议，拒绝 javascript:、file: 等危险协议
 function isValidHttpUrl(str) {
+  if (typeof str !== 'string' || str.length === 0 || str.length > 4096) return false
   try {
     const u = new URL(str)
     return u.protocol === 'http:' || u.protocol === 'https:'
   } catch { return false }
+}
+
+function isValidId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 160
+}
+
+function isStringArray(value, maxLength = 1000) {
+  return Array.isArray(value) && value.length <= maxLength && value.every(isValidId)
+}
+
+function isValidCategories(value) {
+  return Array.isArray(value) && value.length <= 1000 && value.every((category) =>
+    category && typeof category === 'object' && isValidId(category.id) &&
+    typeof category.name === 'string' && category.name.length <= 200
+  )
+}
+
+function isValidSettings(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const limit = value.previewCacheLimitMB
+  return limit === undefined || (Number.isFinite(limit) && limit >= 10 && limit <= 10240)
 }
 
 // bm:update 允许更新的字段白名单（禁止覆盖 id、createdAt 等关键字段）
@@ -87,7 +109,9 @@ export function registerIpc() {
   // ---- 书签 ----
   safeHandle('bm:list', async () => loadBookmarks())
   safeHandle('bm:save', async (_e, list) => {
-    if (!Array.isArray(list)) return { error: '书签数据格式无效' }
+    if (!Array.isArray(list) || list.length > 10000 || !list.every((bookmark) => bookmark && typeof bookmark === 'object' && isValidId(bookmark.id) && isValidHttpUrl(bookmark.url))) {
+      return { error: '书签数据格式无效' }
+    }
     const current = loadBookmarks()
     const currentById = new Map(current.map((bookmark) => [bookmark.id, bookmark]))
     const serverFields = ['favicon', 'screenshot', 'previewHash', 'geo', 'whois']
@@ -165,6 +189,8 @@ export function registerIpc() {
   })
 
   safeHandle('bm:update', async (_e, id, patch) => {
+    if (!isValidId(id) || !patch || typeof patch !== 'object' || Array.isArray(patch)) return { error: '书签更新数据无效' }
+    if (patch.url !== undefined && !isValidHttpUrl(patch.url)) return { error: '无效的 URL，仅允许 http/https 协议' }
     const list = loadBookmarks()
     const idx = list.findIndex((x) => x.id === id)
     if (idx === -1) return null
@@ -243,6 +269,9 @@ export function registerIpc() {
   // 生成二维码 DataURL（纯 Node.js，使用 Canvas 方案或 QR Server API）
   // 由于不引入额外依赖，使用内联 QR Code 生成（简化版）
   safeHandle('bm:qrcode', async (_e, text, size = 256) => {
+    if (typeof text !== 'string' || text.length === 0 || text.length > 2048 || !Number.isInteger(size) || size < 64 || size > 1024) {
+      return { error: '二维码参数无效' }
+    }
     try {
       // 使用 quickchart.io 的公共免费 API 生成（无 API key）
       const url = `https://quickchart.io/qr?text=${encodeURIComponent(text)}&size=${size}&margin=2`
@@ -262,6 +291,7 @@ export function registerIpc() {
   })
 
   safeHandle('bm:deleteBatch', async (_e, ids) => {
+    if (!isStringArray(ids)) return { error: '书签 ID 列表无效' }
     const set = new Set(ids)
     const list = loadBookmarks().filter((x) => !set.has(x.id))
     saveBookmarks(list)
@@ -270,7 +300,11 @@ export function registerIpc() {
 
   // ---- 分类 ----
   safeHandle('cat:list', async () => loadCategories())
-  safeHandle('cat:save', async (_e, cats) => { saveCategories(cats); return true })
+  safeHandle('cat:save', async (_e, cats) => {
+    if (!isValidCategories(cats)) return { error: '分类数据格式无效' }
+    saveCategories(cats)
+    return true
+  })
 
   // ---- 分类环境 ----
   safeHandle('env:list', async () => listEnvironments())
@@ -290,13 +324,13 @@ export function registerIpc() {
 
   // ---- 校验 ----
   safeHandle('validate:one', async (_e, url) => {
-    if (!url || typeof url !== 'string') return { status: 'dead', code: 0, message: '无效 URL', finalUrl: url || '' }
+    if (!isValidHttpUrl(url)) return { status: 'dead', code: 0, message: '无效 URL', finalUrl: typeof url === 'string' ? url : '' }
     return validateUrl(url)
   })
   safeHandle('validate:batch', async (_e, urls) => {
     if (!Array.isArray(urls) || urls.length === 0) return []
-    // 过滤无效 URL，避免批量校验时传入空字符串
-    const validUrls = urls.filter(u => typeof u === 'string' && u.startsWith('http'))
+    if (urls.length > 1000) return { error: '单次最多校验 1000 个书签' }
+    const validUrls = urls.filter(isValidHttpUrl)
     if (validUrls.length === 0) return urls.map(() => ({ status: 'dead', code: 0, message: '无效 URL', finalUrl: '' }))
     // 若部分 URL 无效，先用占位结果初始化，只对有效 URL 校验
     if (validUrls.length < urls.length) {
@@ -328,6 +362,7 @@ export function registerIpc() {
     return readAsDataUrl(previewImagePath(name))
   })
   safeHandle('preview:batch', async (_e, urls) => {
+    if (!Array.isArray(urls) || urls.length > 1000 || !urls.every(isValidHttpUrl)) return { error: '预览 URL 列表无效' }
     return generateBatch(urls, {
       limit: 4,
       onProgress: (done, total, currentUrl) => send('preview:progress', { done, total, currentUrl })
@@ -874,6 +909,7 @@ export function registerIpc() {
   })
 
   safeHandle('settings:save', async (_e, s) => {
+    if (!isValidSettings(s)) return { error: '设置数据格式无效' }
     saveSettings(s)
     clearProxyCache()  // 设置变更时清除代理缓存
     console.log('[settings:save] written to', FILES.settings)
@@ -1053,7 +1089,7 @@ export function registerIpc() {
   })
 
   safeHandle('plugin:list', async () => {
-    return getLoadedPlugins()
+    return getPluginStatus()
   })
 
   safeHandle('plugin:scan', async () => {

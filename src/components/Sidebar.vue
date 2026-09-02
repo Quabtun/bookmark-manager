@@ -168,6 +168,7 @@ const appVersion = ref('')
 
 // 智能文件夹
 const smartFolders = computed(() => settingsStore.settings.smartFolders || [])
+const savedManualFilters = ref(null)
 
 // 分类环境
 async function loadEnvName() {
@@ -202,20 +203,43 @@ function getSmartFolderCount(folderId) {
   return bm.smartFolderResults(folderId).length
 }
 
-  function selectCategory(categoryId) {
-    bm.showRecycled = false
-    bm.showArchived = false
-    bm.activeCategory = categoryId
+function readFilters() {
+  return {
+    searchQuery: bm.searchQuery,
+    statusFilter: bm.statusFilter,
+    tagFilter: bm.tagFilter,
+    domainFilter: bm.domainFilter,
+    dateFrom: bm.dateFrom,
+    dateTo: bm.dateTo
   }
+}
 
-  function onSmartFolderClick(sf) {
-    selectCategory('smart:' + sf.id)
-  bm.searchQuery = sf.query || ''
-  bm.statusFilter = sf.statusFilter || 'all'
-  bm.tagFilter = sf.tagFilter || ''
-  bm.domainFilter = sf.domainFilter || ''
-  bm.dateFrom = sf.dateFrom || ''
-  bm.dateTo = sf.dateTo || ''
+function applyFilters(filters) {
+  Object.assign(bm, filters)
+}
+
+function selectCategory(categoryId) {
+  const leavingSmartFolder = bm.activeCategory.startsWith('smart:')
+  bm.showRecycled = false
+  bm.showArchived = false
+  bm.activeCategory = categoryId
+  if (leavingSmartFolder && !categoryId.startsWith('smart:') && savedManualFilters.value) {
+    applyFilters(savedManualFilters.value)
+    savedManualFilters.value = null
+  }
+}
+
+function onSmartFolderClick(sf) {
+  if (!bm.activeCategory.startsWith('smart:')) savedManualFilters.value = readFilters()
+  selectCategory('smart:' + sf.id)
+  applyFilters({
+    searchQuery: sf.query || '',
+    statusFilter: sf.statusFilter || 'all',
+    tagFilter: sf.tagFilter || '',
+    domainFilter: sf.domainFilter || '',
+    dateFrom: sf.dateFrom || '',
+    dateTo: sf.dateTo || ''
+  })
 }
 
 // 侧边栏宽度拖拽

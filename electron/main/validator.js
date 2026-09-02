@@ -1,5 +1,6 @@
 import { requestWithTimeout } from './http.js'
 import dns from 'node:dns/promises'
+import { mapValidationResults } from './validator-logic.js'
 
 // Status: ok / redirect / warn / dead / unknown
 // Concurrency: 3 (avoid rate limiting)
@@ -114,7 +115,5 @@ export async function validateBatch(urls, { limit = 3, onProgress } = {}) {
     return r
   })
   // Map back to original order
-  const resultMap = {}
-  unique.forEach((u, i) => { resultMap[u] = results[i] })
-  return urls.map((u) => resultMap[u] || { status: 'unknown', code: 0, message: 'not validated', finalUrl: u })
+  return mapValidationResults(urls, unique, results)
 }

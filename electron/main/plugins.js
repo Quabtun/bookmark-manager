@@ -3,6 +3,8 @@ import path from 'node:path'
 import { DATA_DIR } from './store.js'
 
 const PLUGINS_DIR_NAME = 'plugins'
+const TRUSTED_PLUGIN_IDS = new Set()
+const THIRD_PARTY_PLUGIN_DISABLED_REASON = '第三方插件已默认禁用，以防止未受信任代码访问本地数据或执行系统操作。'
 const _plugins = new Map() // id -> { manifest, module, enabled, instance }
 
 function getPluginsDir() {
@@ -99,6 +101,11 @@ export function loadPlugin(manifest) {
   // 检查是否已加载
   if (_plugins.has(id)) return _plugins.get(id)
 
+  if (!TRUSTED_PLUGIN_IDS.has(id)) {
+    console.warn('[plugin] third-party plugin blocked:', id)
+    return null
+  }
+
   // 查找入口文件
   const entry = manifest.main || 'index.js'
   const entryPath = path.join(dir, entry)
@@ -166,6 +173,22 @@ export function getLoadedPlugins() {
     })
   }
   return list
+}
+
+export function getPluginStatus() {
+  return scanPlugins().map((manifest) => ({
+    id: manifest._id,
+    name: manifest.name || manifest._id,
+    version: manifest.version || '0.0.0',
+    description: manifest.description || '',
+    icon: manifest.icon || '📦',
+    enabled: TRUSTED_PLUGIN_IDS.has(manifest._id) && _plugins.has(manifest._id),
+    blocked: !TRUSTED_PLUGIN_IDS.has(manifest._id),
+    blockedReason: !TRUSTED_PLUGIN_IDS.has(manifest._id) ? THIRD_PARTY_PLUGIN_DISABLED_REASON : '',
+    hasSettings: false,
+    hasTab: false,
+    hooks: manifest.hooks || [],
+  }))
 }
 
 // 获取插件的设置面板 HTML

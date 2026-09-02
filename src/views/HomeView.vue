@@ -1619,11 +1619,11 @@ async function validateAll() {
   const list = bm.bookmarks.filter((b) => !b.recycled && !b.archived)
   if (list.length === 0) return window.$toast('没有书签可校验', 'warn')
 
+  const urls = JSON.parse(JSON.stringify(list.map((b) => b.url)))
+  const uniqueUrls = [...new Set(urls)]
   window.$toast(`开始校验 ${list.length} 个书签…`, 'info')
-  ui.startBatchProgress('validate', list.length)
+  ui.startBatchProgress('validate', uniqueUrls.length)
   try {
-    // 必须用深拷贝脱离 Vue Proxy，否则 IPC 序列化可能丢数据
-    const urls = JSON.parse(JSON.stringify(list.map((b) => b.url)))
     const results = await window.api.invoke('validate:batch', urls)
     if (!results || results.error) {
       ui.stopBatchProgress('validate')
