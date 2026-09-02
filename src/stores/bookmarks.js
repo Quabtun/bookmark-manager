@@ -1,10 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { useSettingsStore } from './settings.js'
+import { useCategoriesStore } from './categories.js'
 
 export const useBookmarksStore = defineStore('bookmarks', () => {
   const bookmarks = ref([])
   const loaded = ref(false)
+  const categoriesStore = useCategoriesStore()
   const searchQuery = ref('')
   const activeCategory = ref('all') // 'all' | 'unclassified' | categoryId
   const statusFilter = ref('all')   // 'all' | 'ok' | 'dead' | 'warn' | 'unknown'
@@ -147,7 +149,19 @@ export const useBookmarksStore = defineStore('bookmarks', () => {
     if (activeCategory.value === 'unclassified') {
       list = list.filter((b) => !b.categoryId)
     } else if (activeCategory.value !== 'all' && !activeCategory.value.startsWith('smart:')) {
-      list = list.filter((b) => b.categoryId === activeCategory.value)
+      const categoryId = activeCategory.value
+      const categoryIds = new Set([categoryId])
+      const pending = [categoryId]
+      while (pending.length > 0) {
+        const parentId = pending.pop()
+        for (const category of categoriesStore.categories) {
+          if (category.parentId === parentId && !categoryIds.has(category.id)) {
+            categoryIds.add(category.id)
+            pending.push(category.id)
+          }
+        }
+      }
+      list = list.filter((b) => categoryIds.has(b.categoryId))
     }
     if (statusFilter.value !== 'all') {
       list = list.filter((b) => (b.status || 'unknown') === statusFilter.value)

@@ -1,44 +1,37 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
-// favicon 和预览图缓存（data url），避免重复 IPC 读取
+const kinds = ['validate', 'preview']
+
 export const useUiStore = defineStore('ui', () => {
-  const faviconCache = ref(new Map())  // fileName -> dataUrl
-  const previewCache = ref(new Map())  // url -> { preview, imageDataUrl }
-  const screenshotCache = ref(new Map())  // url -> dataUrl
-  const batchProgress = ref({ active: false, kind: '', done: 0, total: 0 })
-  const isBatchRunning = computed(() => batchProgress.value.active)
-  let batchProgressTimer = null
+  const faviconCache = ref(new Map())
+  const previewCache = ref(new Map())
+  const screenshotCache = ref(new Map())
+  const batchProgress = ref({
+    validate: { active: false, kind: 'validate', done: 0, total: 0 },
+    preview: { active: false, kind: 'preview', done: 0, total: 0 }
+  })
+  const isBatchRunning = computed(() => kinds.some((kind) => batchProgress.value[kind].active))
 
   function startBatchProgress(kind, total) {
-    if (batchProgressTimer) clearTimeout(batchProgressTimer)
-    batchProgressTimer = null
-    batchProgress.value = { active: true, kind, done: 0, total }
+    if (!kinds.includes(kind)) return
+    batchProgress.value[kind] = { active: true, kind, done: 0, total }
   }
 
   function updateBatchProgress(kind, progress) {
-    if (!batchProgress.value.active || batchProgress.value.kind !== kind) return
-    batchProgress.value = { active: true, kind, ...progress }
+    if (!kinds.includes(kind) || !batchProgress.value[kind].active) return
+    batchProgress.value[kind] = { active: true, kind, ...progress }
     if (progress.done >= progress.total) finishBatchProgress(kind)
   }
 
   function finishBatchProgress(kind) {
-    if (!batchProgress.value.active || batchProgress.value.kind !== kind) return
-    if (batchProgressTimer) clearTimeout(batchProgressTimer)
-    const completedProgress = batchProgress.value
-    batchProgressTimer = setTimeout(() => {
-      if (batchProgress.value === completedProgress) {
-        batchProgress.value = { ...batchProgress.value, active: false }
-      }
-      batchProgressTimer = null
-    }, 600)
+    if (!kinds.includes(kind) || !batchProgress.value[kind].active) return
+    batchProgress.value[kind] = { ...batchProgress.value[kind], active: false }
   }
 
   function stopBatchProgress(kind) {
-    if (batchProgress.value.kind !== kind) return
-    if (batchProgressTimer) clearTimeout(batchProgressTimer)
-    batchProgressTimer = null
-    batchProgress.value = { ...batchProgress.value, active: false }
+    if (!kinds.includes(kind)) return
+    batchProgress.value[kind] = { ...batchProgress.value[kind], active: false }
   }
 
   async function getFavicon(fileName) {
@@ -58,9 +51,7 @@ export const useUiStore = defineStore('ui', () => {
     if (previewCache.value.has(url)) return previewCache.value.get(url)
     const preview = await window.api.invoke('preview:get', url)
     let imageDataUrl = null
-    if (preview && preview.image) {
-      imageDataUrl = await window.api.invoke('preview:image', url)
-    }
+    if (preview && preview.image) imageDataUrl = await window.api.invoke('preview:image', url)
     const entry = { preview, imageDataUrl }
     previewCache.value.set(url, entry)
     return entry
@@ -87,7 +78,6 @@ export const useUiStore = defineStore('ui', () => {
   async function captureScreenshot(url) {
     const result = await window.api.invoke('screenshot:capture', url)
     if (result.ok) {
-      // 清除旧缓存，重新加载
       screenshotCache.value.delete(url)
       const dataUrl = await window.api.invoke('screenshot:get', url)
       if (dataUrl) screenshotCache.value.set(url, dataUrl)
@@ -103,8 +93,7 @@ export const useUiStore = defineStore('ui', () => {
   return {
     faviconCache, previewCache, screenshotCache, batchProgress, isBatchRunning,
     startBatchProgress, updateBatchProgress, finishBatchProgress, stopBatchProgress,
-    getFavicon, clearFavicon,
-    getPreview, refreshPreview, clearPreview,
+    getFavicon, clearFavicon, getPreview, refreshPreview, clearPreview,
     getScreenshot, captureScreenshot, clearScreenshot
   }
 })

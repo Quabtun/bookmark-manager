@@ -121,8 +121,8 @@
 
     <!-- 操作按钮 -->
     <button @click="$emit('add')" class="btn-primary">＋ 新建</button>
-    <button @click="$emit('validateAll')" :disabled="batchRunning" class="btn-ghost disabled:opacity-50 disabled:cursor-not-allowed" :title="batchRunning ? `正在${batchKind === 'validate' ? '校验书签' : '加载预览'}` : '校验所有书签'">🩺 校验</button>
-    <button @click="$emit('loadAllPreviews')" :disabled="batchRunning" class="btn-ghost disabled:opacity-50 disabled:cursor-not-allowed" :title="batchRunning ? `正在${batchKind === 'validate' ? '校验书签' : '加载预览'}` : '加载所有预览'">🖼️ 预览</button>
+    <button @click="$emit('validateAll')" :disabled="validateRunning" class="btn-ghost disabled:opacity-50 disabled:cursor-not-allowed" :title="validateRunning ? '正在校验书签' : '校验所有书签'">🩺 校验</button>
+    <button @click="$emit('loadAllPreviews')" :disabled="previewRunning" class="btn-ghost disabled:opacity-50 disabled:cursor-not-allowed" :title="previewRunning ? '正在加载预览' : '加载所有预览'">🖼️ 预览</button>
     <button @click="$emit('autoClassify')" class="btn-ghost" title="自动分类所有书签">🤖 自动分类</button>
     <button @click="$emit('refreshAllFavicons')" class="btn-ghost" title="重新抓取所有图标">🔄 刷新图标</button>
     <button @click="$emit('removeDuplicates')" class="btn-ghost" title="移除重复URL的书签">🔁 去重</button>
@@ -172,8 +172,8 @@ const props = defineProps({
   ui_viewMode: String,
   searchHistory: Array,
   showSearchSuggestions: Boolean,
-  batchRunning: Boolean,
-  batchKind: String
+  validateRunning: Boolean,
+  previewRunning: Boolean
 })
 const emit = defineEmits(['add', 'validateAll', 'loadAllPreviews', 'autoClassify', 'refreshAllFavicons', 'removeDuplicates', 'clearAll', 'archiveSelected', 'update:ui_viewMode', 'importHtml', 'exportHtml', 'exportJson', 'exportStyledHtml', 'exportMarkdown', 'importJson', 'importCsv', 'importFromBrowser', 'importPocketCsv', 'selectSearchSuggestion', 'onSearchBlur', 'onSearchFocus', 'onSearchInput'])
 

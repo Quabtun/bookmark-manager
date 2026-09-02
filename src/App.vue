@@ -1,44 +1,22 @@
 <template>
   <div class="h-screen flex flex-col bg-theme text-[var(--text-primary)]">
     <!-- 校验/预览进度条（右下角浮动卡片，可折叠） -->
-    <Transition name="progress-fade">
-      <!-- 展开状态 -->
-      <div v-if="ui.batchProgress.active && !progressCollapsed"
-           key="expanded"
-           class="fixed bottom-20 right-5 z-50 w-72 glass shadow-glass rounded-xl px-4 py-3">
+    <div v-for="(progress, index) in activeBatchProgresses" :key="progress.kind">
+      <div v-if="!progressCollapsed"
+           class="fixed right-5 z-50 w-72 glass shadow-glass rounded-xl px-4 py-3"
+           :style="{ bottom: (80 + index * 82) + 'px' }">
         <div class="flex items-center gap-2 mb-2">
-          <span class="text-base">{{ ui.batchProgress.kind === 'validate' ? '🩺' : '🖼️' }}</span>
-          <span class="text-sm font-medium flex-1">
-            {{ ui.batchProgress.kind === 'validate' ? '校验书签' : '加载预览' }}
-          </span>
-          <span class="text-xs text-slate-400 tabular-nums">{{ ui.batchProgress.done }}/{{ ui.batchProgress.total }}</span>
-          <button @click="progressCollapsed = true"
-                  class="ml-1 w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition-colors"
-                  title="折叠">
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 6L5 3L8 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-          </button>
+          <span class="text-base">{{ progress.kind === 'validate' ? '🩺' : '🖼️' }}</span>
+          <span class="text-sm font-medium flex-1">{{ progress.kind === 'validate' ? '校验书签' : '加载预览' }}</span>
+          <span class="text-xs text-slate-400 tabular-nums">{{ progress.done }}/{{ progress.total }}</span>
+          <button @click="progressCollapsed = true" class="ml-1 w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 dark:hover:bg-slate-700/50 transition-colors" title="折叠">⌃</button>
         </div>
         <div class="flex items-center gap-2">
-          <div class="flex-1 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-            <div class="h-full rounded-full transition-all duration-300 relative overflow-hidden"
-                 style="background: var(--accent-500)"
-                 :style="{ width: progressPercent + '%' }">
-              <span class="absolute inset-0 shimmer-bar"></span>
-            </div>
-          </div>
-          <span class="text-xs font-medium text-slate-500 dark:text-slate-400 tabular-nums w-8 text-right">{{ progressPercent }}%</span>
+          <div class="flex-1 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden"><div class="h-full rounded-full transition-all duration-300" style="background: var(--accent-500)" :style="{ width: progressPercent(progress) + '%' }"></div></div>
+          <span class="text-xs font-medium text-slate-500 dark:text-slate-400 tabular-nums w-8 text-right">{{ progressPercent(progress) }}%</span>
         </div>
       </div>
-      <!-- 折叠状态：迷你药丸 -->
-      <div v-else-if="ui.batchProgress.active && progressCollapsed"
-           key="collapsed"
-           @click="progressCollapsed = false"
-           class="fixed bottom-20 right-5 z-50 cursor-pointer glass shadow-glass rounded-full px-3 py-1.5 flex items-center gap-1.5 hover:scale-105 transition-transform">
-        <span class="text-sm">{{ ui.batchProgress.kind === 'validate' ? '🩺' : '🖼️' }}</span>
-        <span class="text-xs font-medium text-slate-500 dark:text-slate-400 tabular-nums">{{ progressPercent }}%</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="text-slate-400"><path d="M2 4L5 7L8 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-      </div>
-    </Transition>
+    </div>
 
     <router-view />
 
@@ -66,11 +44,12 @@ const toasts = ref([])
 let toastId = 0
 const progressCollapsed = ref(false)
 
-const progressPercent = computed(() => {
-  const p = ui.batchProgress
-  if (!p.total) return 0
-  return Math.round((p.done / p.total) * 100)
-})
+const activeBatchProgresses = computed(() => Object.values(ui.batchProgress).filter((progress) => progress.active))
+
+function progressPercent(progress) {
+  if (!progress.total) return 0
+  return Math.round((progress.done / progress.total) * 100)
+}
 
 function toast(msg, type = 'info') {
   const id = ++toastId

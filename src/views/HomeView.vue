@@ -32,8 +32,8 @@
         v-model:ui_viewMode="viewMode"
         :search-history="searchHistory"
         :show-search-suggestions="showSearchSuggestions"
-        :batch-running="ui.isBatchRunning"
-        :batch-kind="ui.batchProgress.kind"
+        :validate-running="ui.batchProgress.validate.active"
+        :preview-running="ui.batchProgress.preview.active"
         @add="onAdd"
         @validate-all="validateAll"
         @load-all-previews="loadAllPreviews"
@@ -1615,7 +1615,7 @@ async function onDeleteCard(b) {
 
 // ---- 批量操作 ----
 async function validateAll() {
-  if (ui.isBatchRunning) return window.$toast('已有批量任务正在进行，请等待完成', 'warn')
+  if (ui.batchProgress.validate.active) return window.$toast('校验任务正在进行，请等待完成', 'warn')
   const list = bm.bookmarks.filter((b) => !b.recycled && !b.archived)
   if (list.length === 0) return window.$toast('没有书签可校验', 'warn')
 
@@ -1664,7 +1664,7 @@ async function validateAll() {
 }
 
 async function loadAllPreviews() {
-  if (ui.isBatchRunning) return window.$toast('已有批量任务正在进行，请等待完成', 'warn')
+  if (ui.batchProgress.preview.active) return window.$toast('预览任务正在进行，请等待完成', 'warn')
   const list = bm.bookmarks.filter((b) => !b.recycled && !b.archived)
   if (list.length === 0) return window.$toast('没有书签可加载预览', 'warn')
 
