@@ -1,19 +1,5 @@
 <template>
   <div class="flex h-screen">
-    <Sidebar
-      @manage-categories="showCatMgr = true"
-      @new-folder="onNewFolder"
-      @open-credentials="showCred = true"
-      @open-cookies="showCookie = true"
-      @open-plugins="showPluginMgr = true"
-      @open-snapshots="showSnap = true"
-      @open-recycle="bm.showRecycled = true"
-      @close-recycle="bm.showRecycled = false"
-      @open-archive="bm.showArchived = true"
-      @close-archive="bm.showArchived = false"
-      @new-smart-folder="smartFolderDialog.visible = true"
-    />
-
     <main class="flex-1 flex flex-col min-w-0 relative bg-theme"
           @contextmenu.prevent="onSurfaceContext"
           @dragover.prevent="onDragOverMain"
@@ -119,54 +105,34 @@
         <button @click="batchDeleteSelected" class="btn-ghost text-xs py-0.5 text-red-500">🗑️ 删除选中</button>
       </div>
 
-      <!-- 书签区 -->
-      <div class="flex-1 overflow-y-auto p-5" ref="scrollArea">
-        <!-- 空状态 -->
+      <!-- 左右分栏书签整理区 -->
+      <div v-show="!bm.showRecycled && !bm.showArchived" class="flex-1 min-h-0 p-3">
+        <div class="h-full grid gap-0" :style="organizerGridStyle">
+          <OrganizerPane
+            side="left"
+            @new-folder="onNewFolderInPane('left')"
+            @surface-menu="onPaneSurfaceMenu"
+            @manage-categories="showCatMgr = true"
+          />
+          <PaneSplitter
+            :model-value="viewState.organizer.leftPaneWidth"
+            @update:model-value="viewState.setLeftPaneWidth"
+          />
+          <OrganizerPane
+            side="right"
+            @new-folder="onNewFolderInPane('right')"
+            @surface-menu="onPaneSurfaceMenu"
+            @manage-categories="showCatMgr = true"
+          />
+        </div>
+      </div>
+
+      <!-- 回收站/归档模式仍使用旧视图 -->
+      <div v-show="bm.showRecycled || bm.showArchived" class="flex-1 overflow-y-auto p-5" ref="scrollArea">
         <div v-if="bm.loaded && bm.flatFiltered.length === 0" class="h-full flex flex-col items-center justify-center text-slate-400">
           <div class="text-6xl mb-3">📭</div>
           <div class="text-lg">{{ bm.bookmarks.length === 0 ? '还没有书签' : '没有匹配的书签' }}</div>
-          <div class="text-sm mt-1">{{ bm.bookmarks.length === 0 ? '点击右上角「新建」或「⋯」导入浏览器书签' : '试试调整搜索或筛选条件' }}</div>
-          <button v-if="bm.bookmarks.length === 0" @click="importHtml" class="btn-primary mt-4">📥 导入浏览器书签</button>
         </div>
-
-        <!-- 分组视图 -->
-        <template v-if="bm.filtered && bm.filtered.grouped">
-          <div v-for="(bookmarks, catId) in bm.filtered.groups" :key="catId" class="mb-6">
-            <div @click="collapsedGroups[catId] = !collapsedGroups[catId]"
-                 class="flex items-center gap-2 px-1 py-2 cursor-pointer select-none hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded-lg transition group">
-              <span class="text-xs text-slate-400 transition-transform" :class="collapsedGroups[catId] ? '' : 'rotate-90'">&#9656;</span>
-              <span class="text-sm font-semibold text-slate-600 dark:text-slate-300">
-                {{ catId === 'unclassified' ? '未分类' : (cats.byId[catId]?.name || catId) }}
-              </span>
-              <span class="text-xs text-slate-400 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">{{ bookmarks.length }}</span>
-            </div>
-            <div v-show="!collapsedGroups[catId]" class="mt-2">
-              <div v-if="viewMode === 'grid'" class="grid gap-3.5" :class="gridClass">
-                <BookmarkCard
-                  v-for="(b, idx) in bookmarks" :key="b.id" :bm="b" :view-mode="'grid'"
-                  @edit="onEdit" @validate="onValidate" @geo="onGeo" @delete="onDeleteCard" @open="onOpen" @hover="onHover" @leave="onLeave" @context="onContext"
-                  @reorder="onReorder"
-                  @quick-note="onQuickNote"
-                  @archive="onArchive"
-                  @dragOver="() => {}" @dragLeave="() => {}"
-                />
-              </div>
-              <div v-else class="space-y-1.5">
-                <div v-for="(b, idx) in bookmarks" :key="b.id">
-                  <BookmarkCard :bm="b" :view-mode="'list'"
-                    @edit="onEdit" @validate="onValidate" @geo="onGeo" @delete="onDeleteCard" @open="onOpen" @hover="onHover" @leave="onLeave" @context="onContext"
-                    @reorder="onReorder"
-                    @quick-note="onQuickNote"
-                    @archive="onArchive"
-                    @dragOver="() => {}" @dragLeave="() => {}"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </template>
-
-        <!-- 网格视图（非分组） -->
         <div v-else-if="viewMode === 'grid'" class="grid gap-3.5" :class="gridClass">
           <BookmarkCard
             v-for="(b, idx) in bm.paginatedFiltered" :key="b.id" :bm="b" :view-mode="'grid'" :focused="focusedIndex === idx"
@@ -177,8 +143,6 @@
             @archive="onArchive"
           />
         </div>
-
-        <!-- 列表视图（非分组） -->
         <div v-else class="space-y-1.5">
           <div v-for="(b, idx) in bm.paginatedFiltered" :key="b.id">
             <BookmarkCard :bm="b" :view-mode="'list'" :focused="focusedIndex === idx"
@@ -189,29 +153,6 @@
               @archive="onArchive"
             />
           </div>
-        </div>
-      </div>
-
-      <!-- 分页导航栏（仅非分组视图显示） -->
-      <div v-if="!bm.showRecycled && !bm.showArchived && !(bm.filtered && bm.filtered.grouped) && bm.totalPages > 1"
-           class="px-5 py-2 flex items-center gap-3 text-xs border-t border-slate-200/50 dark:border-slate-700/50 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
-        <span class="text-slate-500">共 {{ bm.flatFiltered.length }} 条</span>
-        <span class="text-slate-400">第 {{ bm.currentPage }}/{{ bm.totalPages }} 页</span>
-        <button @click="goToPage(bm.currentPage - 1)" :disabled="bm.currentPage <= 1" class="btn-ghost text-xs py-0.5 disabled:opacity-30">上一页</button>
-        <button @click="goToPage(bm.currentPage + 1)" :disabled="bm.currentPage >= bm.totalPages" class="btn-ghost text-xs py-0.5 disabled:opacity-30">下一页</button>
-        <div class="flex items-center gap-1">
-          <input type="number" :value="bm.currentPage" @keydown.enter="goToPage(Number($event.target.value))" class="input w-14 text-xs py-0.5 text-center" min="1" :max="bm.totalPages" />
-          <span class="text-slate-400">/ {{ bm.totalPages }}</span>
-        </div>
-        <div class="ml-auto flex items-center gap-1">
-          <span class="text-slate-400">每页</span>
-          <select v-model="bm.pageSize" class="input w-auto text-xs py-0.5">
-            <option :value="30">30</option>
-            <option :value="60">60</option>
-            <option :value="100">100</option>
-            <option :value="200">200</option>
-          </select>
-          <span class="text-slate-400">条</span>
         </div>
       </div>
     </main>
@@ -617,7 +558,6 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import Sidebar from '../components/Sidebar.vue'
 import Toolbar from '../components/Toolbar.vue'
 import BookmarkCard from '../components/BookmarkCard.vue'
 import PreviewPopup from '../components/PreviewPopup.vue'
@@ -632,15 +572,22 @@ import WebPreview from '../components/WebPreview.vue'
 import TabbedPreview from '../components/TabbedPreview.vue'
 import ResultDialog from '../components/ResultDialog.vue'
 import ContextMenu from '../components/ContextMenu.vue'
+import OrganizerPane from '../components/OrganizerPane.vue'
+import PaneSplitter from '../components/PaneSplitter.vue'
 import { useBookmarksStore } from '../stores/bookmarks.js'
 import { useCategoriesStore } from '../stores/categories.js'
 import { useUiStore } from '../stores/ui.js'
 import { useSettingsStore } from '../stores/settings.js'
+import { useViewStateStore } from '../stores/viewState.js'
 
 const bm = useBookmarksStore()
 const cats = useCategoriesStore()
 const ui = useUiStore()
 const settings = useSettingsStore()
+const viewState = useViewStateStore()
+
+// 启动时一次性从 settings.organizer 恢复视图状态
+viewState.load()
 
 function getDesktopApi() {
   if (!window.api || typeof window.api.invoke !== 'function') {
@@ -651,6 +598,16 @@ function getDesktopApi() {
 
 const viewMode = ref('grid')
 const gridClass = computed(() => 'grid-cols-[repeat(auto-fill,minmax(280px,1fr))]')
+
+// 分栏网格：根据 viewState.organizer.leftPaneWidth 计算左右两栏宽度
+const organizerGridStyle = computed(() => {
+  const ratio = Number(viewState.organizer.leftPaneWidth) || 0.42
+  const leftPct = (ratio * 100).toFixed(2) + '%'
+  const rightPct = ((1 - ratio) * 100).toFixed(2) + '%'
+  return {
+    gridTemplateColumns: `${leftPct} 6px ${rightPct}`
+  }
+})
 
 // 兼容：获取扁平列表（用于键盘导航等需要 length 的场景）
 const flatFiltered = computed(() => {
@@ -917,6 +874,25 @@ function onSurfaceContext(event) {
   surfaceMenu.value = { visible: true, x: event.clientX, y: event.clientY }
 }
 function onSurfaceMenuSelect(item) { item.action?.() }
+function onPaneSurfaceMenu(event) {
+  // 复用 surfaceMenu 弹出新建/添加等
+  surfaceMenu.value = { visible: true, x: event.clientX, y: event.clientY }
+}
+
+// 在分栏内新建文件夹：根据所在分栏决定 parentId
+async function onNewFolderInPane(side) {
+  const sel = side === 'left' ? viewState.organizer.leftSelectedKey : viewState.organizer.rightSelectedKey
+  let parentId = null
+  if (side === 'right' && sel) {
+    parentId = sel
+  } else if (side === 'left' && sel && sel !== 'all' && sel !== 'unclassified') {
+    parentId = sel
+  }
+  const name = window.prompt('新建文件夹名称', '新文件夹')
+  if (!name || !name.trim()) return
+  await cats.add({ name: name.trim(), icon: '📁', color: '#64748b', parentId, tags: [] })
+  if (window.$toast) window.$toast(`文件夹「${name.trim()}」已创建`, 'success')
+}
 const quickCats = computed(() => cats.sorted.slice(0, 12))
 const bookmarkMenuItems = computed(() => [
   { type: 'heading', label: '书签操作' },
@@ -1133,6 +1109,16 @@ async function refreshCacheSize() {
 
 onMounted(async () => {
   await Promise.all([bm.load(), cats.load()])
+  // settings 在 App.vue onMounted 时加载，HomeView 挂载可能早于其完成。
+  // 此时若 settings.loaded 仍未 true，等其就绪后再恢复 organizer 视图状态。
+  if (!settings.loaded) {
+    await new Promise((resolve) => {
+      const stop = watch(() => settings.loaded, (v) => {
+        if (v) { stop(); resolve() }
+      })
+    })
+  }
+  viewState.load()
   refreshCacheSize()
   // 自动校验（按设置）
   if (settings.settings.autoValidate.onStartup) {

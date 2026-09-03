@@ -129,7 +129,15 @@ export const useSettingsStore = defineStore('settings', () => {
     currentWorkspace: '',
     lockEnabled: false,
     lockPassword: '',
-    smartFolders: []
+    smartFolders: [],
+    organizer: {
+      leftPaneWidth: 0.42,
+      leftSelectedKey: 'unclassified',
+      leftExpandedIds: [],
+      rightSelectedKey: '',
+      rightExpandedIds: [],
+      lastActiveSide: 'right'
+    }
   })
   const loaded = ref(false)
 

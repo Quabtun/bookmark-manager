@@ -17,7 +17,7 @@
     "build:publish": "vite build && node scripts/fix-preload.cjs && electron-builder --publish always",
     "fix:preload": "node scripts/fix-preload.cjs",
     "generate-delta": "node scripts/generate-delta.mjs",
-    "test": "node --test test/delta-logic.test.mjs test/updater-logic.test.mjs test/validator-logic.test.mjs",
+    "test": "node --test test/delta-logic.test.mjs test/updater-logic.test.mjs test/validator-logic.test.mjs test/organizer.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

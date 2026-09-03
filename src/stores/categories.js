@@ -1,6 +1,48 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
+/**
+ * 给定一组分类与起始 id，返回「包含自身」的整棵子树 id 集合。
+ * @param {Array<{id:string,parentId:string|null}>} categories
+ * @param {string|null|undefined} id
+ * @returns {Set<string>}
+ */
+export function collectDescendantIds(categories, id) {
+  const set = new Set()
+  if (!id) return set
+  set.add(id)
+  const stack = [id]
+  while (stack.length > 0) {
+    const pid = stack.pop()
+    for (const c of categories) {
+      if (c.parentId === pid && !set.has(c.id)) {
+        set.add(c.id)
+        stack.push(c.id)
+      }
+    }
+  }
+  return set
+}
+
+/**
+ * 判断 ancestorId 是否是 descendantId 的祖先（不含自身）。
+ * @param {Array<{id:string,parentId:string|null}>} categories
+ * @param {string} ancestorId
+ * @param {string} descendantId
+ * @returns {boolean}
+ */
+export function isAncestorOf(categories, ancestorId, descendantId) {
+  if (!ancestorId || !descendantId) return false
+  const byId = new Map()
+  for (const c of categories) byId.set(c.id, c)
+  let cur = byId.get(descendantId)
+  while (cur && cur.parentId) {
+    if (cur.parentId === ancestorId) return true
+    cur = byId.get(cur.parentId)
+  }
+  return false
+}
+
 export const useCategoriesStore = defineStore('categories', () => {
   const categories = ref([])
   const loaded = ref(false)
@@ -83,5 +125,25 @@ export const useCategoriesStore = defineStore('categories', () => {
     await save(categories.value)
   }
 
-  return { categories, sorted, tree, byId, loaded, load, save, add, update, remove, reorder }
+  // 给定分类 id，返回「包含自身」的整棵子树 id 列表
+  function descendantIds(id) {
+    return collectDescendantIds(categories.value, id)
+  }
+
+  // 给定一组 id，返回其全部后代 id 的并集（含自身）
+  function descendantIdsUnion(ids) {
+    const set = new Set()
+    for (const id of ids) {
+      const sub = descendantIds(id)
+      for (const v of sub) set.add(v)
+    }
+    return set
+  }
+
+  // 判断 ancestorId 是否是 descendantId 的祖先（用于拖拽防循环）
+  function isAncestor(ancestorId, descendantId) {
+    return isAncestorOf(categories.value, ancestorId, descendantId)
+  }
+
+  return { categories, sorted, tree, byId, loaded, load, save, add, update, remove, reorder, descendantIds, descendantIdsUnion, isAncestor }
 })
