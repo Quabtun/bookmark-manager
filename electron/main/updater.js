@@ -20,6 +20,42 @@ const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/r
 const GITHUB_API_LATEST = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
 const GITHUB_API_LIST = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=10`
 
+// [FIX] 封装 GitHub API 请求：统一 JSON 头，自带重定向跟随。
+// 关键：socks5Request / httpProxyRequest 不跟 301/302，所以这里在应用层显式 chase，
+// 直到拿到非 3xx 的最终状态（200/404 等），避免代理场景下 "GitHub API 返回 301" 误报。
+async function fetchGithubApi(url, timeout = 10000) {
+  const maxHops = 5
+  let currentUrl = url
+  for (let i = 0; i < maxHops; i++) {
+    const resp = await requestWithTimeout(currentUrl, {
+      method: 'GET',
+      timeout,
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'BookmarkManager-Updater'
+      }
+    })
+    if ([301, 302, 303, 307, 308].includes(resp.status) && resp.headers && resp.headers.location) {
+      try {
+        currentUrl = new URL(resp.headers.location, currentUrl).toString()
+      } catch {
+        break
+      }
+      continue
+    }
+    return resp
+  }
+  // 跳了 maxHops 次还在 3xx：放弃，返回最后一次的状态
+  return requestWithTimeout(currentUrl, {
+    method: 'GET',
+    timeout,
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': 'BookmarkManager-Updater'
+    }
+  })
+}
+
 // ============================================================
 // 暂存文件夹 —— 下载更新包到此目录，安装后自动清理
 // ============================================================
@@ -67,6 +103,12 @@ let _installDone = false  // 安装完成标志，允许 app.quit() 通过 befor
 // ============================================================
 function setState(newState, data) {
   currentState = newState
+  // [DEBUG] 打印状态/错误，方便定位 "GitHub API 返回 301" 这种问题的真正来源。
+  // 生产构建可通过 ELECTRON_DISABLE_UPDATER_LOG=1 关闭。
+  if (!process.env.ELECTRON_DISABLE_UPDATER_LOG) {
+    const err = data && data.rawError ? data.rawError : lastError
+    console.log('[updater] setState', newState, 'lastError=', lastError, 'rawError=', data && data.rawError || '', 'appVersion=', app.getVersion())
+  }
   notifyStateChange(data)
 }
 
@@ -112,6 +154,35 @@ function getMainWindowRef() {
     }
   }
   return null
+}
+
+// [FIX] 把 raw 错误信息里的 HTTP 状态码（特别是 301/302/404）翻译成对用户更友好的中文消息。
+// electron-updater 抛出的字符串经常包含 "Response code: 301 (Moved Permanently)"，
+// 这种错误本质是"目标仓库暂时没有可用 release"，对用户不应暴露技术细节。
+function translateUpdaterError(rawMsg) {
+  if (!rawMsg) return '检查更新失败，请稍后重试'
+  const msg = String(rawMsg)
+  // 301/302 仓库迁移或重定向
+  if (/Response code:\s*30[12]\b/.test(msg) || /\b301\b.*Moved Permanently/i.test(msg) || /\b302\b.*Found/i.test(msg)) {
+    return '发布仓库正在迁移或暂时不可用，请稍后再试'
+  }
+  // 404 仓库无 release
+  if (/Response code:\s*404\b/.test(msg) || /\b404\b.*Not Found/i.test(msg)) {
+    return '暂无新版本发布'
+  }
+  // 403 / rate limit
+  if (/Response code:\s*403\b/.test(msg) || /rate limit/i.test(msg)) {
+    return '请求频率受限，请稍后再试'
+  }
+  // 5xx
+  if (/Response code:\s*5\d\d\b/.test(msg)) {
+    return 'GitHub 服务暂时不可用，请稍后再试'
+  }
+  // 超时
+  if (/timeout|ETIMEDOUT|ECONNRESET/i.test(msg)) {
+    return '网络连接超时，请检查网络或代理设置'
+  }
+  return msg
 }
 
 function isPortableBuild() {
@@ -204,8 +275,13 @@ async function loadAutoUpdater() {
     autoUpdater.on('error', (err) => {
       console.error('[updater] error:', err)
       if (currentState === STATE.DOWNLOADING && retryCount > 0) return
-      lastError = err.message || String(err)
-      setState(STATE.ERROR)
+      const rawMsg = err && err.message ? err.message : String(err)
+      // [FIX] electron-updater 在 GitHub 仓库被迁移/重命名时，内部 Request 抛
+      // "Response code: 301 (Moved Permanently)" / "404 Not Found"。这类错误对用户
+      // 来说本质是"暂无更新"，翻译为友好文案避免暴露技术细节。
+      const friendly = translateUpdaterError(rawMsg)
+      lastError = friendly
+      setState(STATE.ERROR, { error: friendly, rawError: rawMsg })
     })
 
     autoUpdater.on('download-progress', (progress) => {
@@ -249,16 +325,12 @@ async function checkGithubReleases() {
   try {
     // [FIX] 优先用 /releases 列表接口（包含 prerelease，CDN 缓存更短）
     // 回退到 /releases/latest（仅非 prerelease，缓存更久）
+    // [FIX] 即使代理层未自动跟随重定向，也由本函数显式识别并自跟 301/302。
     let release = null
+    let listStatus = 0
     try {
-      const listResp = await requestWithTimeout(GITHUB_API_LIST, {
-        method: 'GET',
-        timeout: 10000,
-        headers: {
-          'Accept': 'application/vnd.github+json',
-          'User-Agent': 'BookmarkManager-Updater'
-        }
-      })
+      const listResp = await fetchGithubApi(GITHUB_API_LIST, 10000)
+      listStatus = listResp.status
       if (listResp.status === 200 && listResp.body) {
         const releases = JSON.parse(listResp.body.toString())
         if (Array.isArray(releases) && releases.length > 0) {
@@ -270,17 +342,44 @@ async function checkGithubReleases() {
       console.warn('[updater] /releases 列表请求失败，回退到 /releases/latest:', e.message)
     }
 
+    // [FIX] 仓库尚未发布任何 release：列表返回空数组或 404，统一视为"无更新"。
+    // 仓库被迁移/重命名后 api.github.com 会返回 301，重定向到新仓路径，
+    // 也可能在某些代理下保留 301。这里不再把 301/404 当成错误抛给用户。
+    if (!release && (listStatus === 200 || listStatus === 301 || listStatus === 302)) {
+      updateInfo = null
+      setState(STATE.NOT_AVAILABLE)
+      return {
+        hasUpdate: false,
+        currentVersion: app.getVersion(),
+        latestVersion: app.getVersion(),
+        releaseNotes: '',
+        releaseDate: '',
+        downloadUrl: '',
+        htmlUrl: GITHUB_RELEASES_URL,
+        mode: 'github-api'
+      }
+    }
+
     if (!release) {
-      const resp = await requestWithTimeout(GITHUB_API_LATEST, {
-        method: 'GET',
-        timeout: 10000,
-        headers: {
-          'Accept': 'application/vnd.github+json',
-          'User-Agent': 'BookmarkManager-Updater'
+      const resp = await fetchGithubApi(GITHUB_API_LATEST, 10000)
+      // [FIX] /releases/latest 在仓库无 release 时是 404、仓库迁移时是 301：
+      // 两种都属于"暂时没有可用的版本信息"，按 not-available 处理。
+      if (resp.status === 404 || resp.status === 301 || resp.status === 302) {
+        updateInfo = null
+        setState(STATE.NOT_AVAILABLE)
+        return {
+          hasUpdate: false,
+          currentVersion: app.getVersion(),
+          latestVersion: app.getVersion(),
+          releaseNotes: '',
+          releaseDate: '',
+          downloadUrl: '',
+          htmlUrl: GITHUB_RELEASES_URL,
+          mode: 'github-api'
         }
-      })
+      }
       if (resp.status !== 200 || !resp.body) {
-        lastError = `GitHub API 返回 ${resp.status}`
+        lastError = `检查更新失败（HTTP ${resp.status}）`
         setState(STATE.ERROR)
         return { error: lastError }
       }
@@ -293,9 +392,20 @@ async function checkGithubReleases() {
 
     const asset = pickBestAsset(release.assets)
     if (!asset.url) {
-      lastError = '该 GitHub Release 未包含可下载的 Windows 安装包'
-      setState(STATE.ERROR)
-      return { error: lastError }
+      // [FIX] 找到 release 但没有可下载资产：不算错误，而是"无更新"，避免 UI 误报。
+      lastError = ''
+      updateInfo = null
+      setState(STATE.NOT_AVAILABLE)
+      return {
+        hasUpdate: false,
+        currentVersion,
+        latestVersion,
+        releaseNotes: release.body || '',
+        releaseDate: release.published_at || '',
+        downloadUrl: '',
+        htmlUrl: release.html_url || GITHUB_RELEASES_URL,
+        mode: 'github-api'
+      }
     }
 
     // [FIX] 禁用差分更新：没有生成 delta 文件，检测逻辑增加复杂度且可能误匹配
@@ -334,7 +444,7 @@ async function checkGithubReleases() {
       mode: 'github-api'
     }
   } catch (e) {
-    lastError = e.message || 'GitHub API 请求失败'
+    lastError = translateUpdaterError(e.message || 'GitHub API 请求失败')
     setState(STATE.ERROR)
     return { error: lastError }
   }

@@ -1,5 +1,15 @@
 <template>
   <div class="flex h-screen">
+    <Sidebar
+      v-model:collapsed="sidebarCollapsed"
+      @new-folder="onSidebarNewFolder"
+      @open-snapshots="onSidebarOpenSnapshots"
+      @open-credentials="onSidebarOpenCredentials"
+      @open-cookies="onSidebarOpenCookies"
+      @open-plugins="onSidebarOpenPlugins"
+      @open-recycle="onSidebarOpenRecycle"
+      @open-archive="onSidebarOpenArchive"
+    />
     <main class="flex-1 flex flex-col min-w-0 relative bg-theme"
           @contextmenu.prevent="onSurfaceContext"
           @dragover.prevent="onDragOverMain"
@@ -13,46 +23,7 @@
           <div class="text-sm font-medium text-slate-600 dark:text-slate-300">拖放 URL 到此处添加书签</div>
         </div>
       </div>
-      <Toolbar
-        v-show="!bm.focusMode"
-        v-model:ui_viewMode="viewMode"
-        :search-history="searchHistory"
-        :show-search-suggestions="showSearchSuggestions"
-        :validate-running="ui.batchProgress.validate.active"
-        :preview-running="ui.batchProgress.preview.active"
-        @add="onAdd"
-        @validate-all="validateAll"
-        @load-all-previews="loadAllPreviews"
-        @auto-classify="autoClassify"
-        @refresh-all-favicons="refreshAllFavicons"
-        @remove-duplicates="removeDuplicates"
-        @clear-all="clearAll"
-        @archive-selected="archiveSelected"
-        @import-html="importHtml"
-        @export-html="exportHtml"
-        @export-json="exportJson"
-        @export-styled-html="exportStyledHtml"
-        @import-json="importJson"
-        @import-from-browser="importFromBrowser"
-        @import-pocket-csv="importPocketCsv"
-        @import-csv="importCsv"
-        @export-markdown="exportMarkdown"
-        @select-search-suggestion="selectSearchSuggestion"
-        @on-search-blur="onSearchBlur"
-        @on-search-focus="onSearchFocus"
-        @on-search-input="onSearchInput"
-      />
-
-      <!-- 统计条（可点击筛选） -->
-      <div v-if="!bm.showRecycled" class="px-5 py-2 flex items-center gap-3 text-xs border-b border-slate-200/50 dark:border-slate-700/50">
-        <button @click="bm.statusFilter = 'all'" :class="['px-2 py-0.5 rounded transition', bm.statusFilter === 'all' ? 'bg-accent text-white' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700']">全部 {{ bm.stats.total }}</button>
-        <button @click="bm.statusFilter = 'ok'" :class="['px-2 py-0.5 rounded transition', bm.statusFilter === 'ok' ? 'bg-green-500 text-white' : 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900/30']">✅ {{ bm.stats.ok }}</button>
-        <button @click="bm.statusFilter = 'warn'" :class="['px-2 py-0.5 rounded transition', bm.statusFilter === 'warn' ? 'bg-amber-500 text-white' : 'text-amber-600 hover:bg-amber-100 dark:hover:bg-amber-900/30']">⚠️ {{ bm.stats.warn }}</button>
-        <button @click="bm.statusFilter = 'dead'" :class="['px-2 py-0.5 rounded transition', bm.statusFilter === 'dead' ? 'bg-red-500 text-white' : 'text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30']">💀 {{ bm.stats.dead }}</button>
-        <button @click="bm.statusFilter = 'redirect'" :class="['px-2 py-0.5 rounded transition', bm.statusFilter === 'redirect' ? 'bg-blue-500 text-white' : 'text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/30']">🔁 {{ bm.stats.redirect }}</button>
-        <button @click="bm.statusFilter = 'unknown'" :class="['px-2 py-0.5 rounded transition', bm.statusFilter === 'unknown' ? 'bg-slate-500 text-white' : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700']">❓ {{ bm.stats.unknown }}</button>
-        <span class="ml-auto" v-if="previewCacheMb !== null">🖼️ {{ previewCacheMb }} / {{ settings.settings.previewCacheLimitMB }} MB</span>
-      </div>
+      <!-- 工具栏已整合进左右 OrganizerPane 顶栏（每窗独立） -->
 
       <!-- 回收站工具栏 -->
       <div v-if="bm.showRecycled"
@@ -105,24 +76,67 @@
         <button @click="batchDeleteSelected" class="btn-ghost text-xs py-0.5 text-red-500">🗑️ 删除选中</button>
       </div>
 
-      <!-- 左右分栏书签整理区 -->
+      <!-- 左右分栏书签整理区（两边等宽，移除可拖拽分隔条） -->
       <div v-show="!bm.showRecycled && !bm.showArchived" class="flex-1 min-h-0 p-3">
         <div class="h-full grid gap-0" :style="organizerGridStyle">
           <OrganizerPane
             side="left"
+            :preview-cache-mb="previewCacheMb"
+            :preview-cache-limit-mb="settings.settings.previewCacheLimitMB"
+            :search-history="searchHistory"
+            :show-search-suggestions="showSearchSuggestions"
+            :validate-running="ui.batchProgress.validate.active"
+            :preview-running="ui.batchProgress.preview.active"
             @new-folder="onNewFolderInPane('left')"
+            @import="importHtml"
             @surface-menu="onPaneSurfaceMenu"
             @manage-categories="showCatMgr = true"
+            @open-env-manager="viewState.envManagerOpen = true"
+            @add="onAdd"
+            @validate-all="validateAll"
+            @load-all-previews="loadAllPreviews"
+            @auto-classify="autoClassify"
+            @refresh-all-favicons="refreshAllFavicons"
+            @remove-duplicates="removeDuplicates"
+            @clear-all="clearAll"
+            @archive-selected="archiveSelected"
+            @batch-delete-selected="batchDeleteSelected"
+            @import-html="importHtml"
+            @export-html="exportHtml"
+            @export-json="exportJson"
+            @export-styled-html="exportStyledHtml"
+            @import-json="importJson"
+            @import-from-browser="importFromBrowser"
+            @import-pocket-csv="importPocketCsv"
+            @import-csv="importCsv"
+            @export-markdown="exportMarkdown"
+            @select-search-suggestion="selectSearchSuggestion"
+            @on-search-blur="onSearchBlur"
+            @on-search-focus="onSearchFocus"
+            @on-search-input="onSearchInput"
+            @card-edit="onEdit"
+            @card-validate="onValidate"
+            @card-geo="onGeo"
+            @card-archive="onArchive"
+            @card-restore="onRestoreCard"
+            @card-unarchive="onUnarchiveCard"
+            @card-delete="onDeleteCard"
+            @card-open="onCardOpen"
+            @card-hover="onCardHover"
+            @card-leave="onCardLeave"
+            @card-context="onCardContext"
+            @card-quick-note="onCardQuickNote"
           />
-          <PaneSplitter
-            :model-value="viewState.organizer.leftPaneWidth"
-            @update:model-value="viewState.setLeftPaneWidth"
-          />
+          <div class="w-1.5 cursor-col-resize bg-[var(--stroke-subtle)]/60 hover:bg-accent/40 transition" title="等宽分隔条"></div>
           <OrganizerPane
             side="right"
             @new-folder="onNewFolderInPane('right')"
             @surface-menu="onPaneSurfaceMenu"
             @manage-categories="showCatMgr = true"
+            @open-env-manager="viewState.envManagerOpen = true"
+            @export-action="onExportAction"
+            @card-edit="onEdit" @card-validate="onValidate" @card-geo="onGeo" @card-archive="onArchive" @card-restore="onRestoreCard" @card-unarchive="onUnarchiveCard" @card-delete="onDeleteCard" @card-open="onCardOpen"
+            @card-hover="onCardHover" @card-leave="onCardLeave" @card-context="onCardContext" @card-quick-note="onCardQuickNote"
           />
         </div>
       </div>
@@ -534,31 +548,11 @@
         </div>
       </div>
     </teleport>
-
-    <!-- 通知中心（功能7） -->
-    <div class="fixed top-3 right-3 z-[200]">
-      <button @click="notificationPanel.visible = !notificationPanel.visible" class="relative w-8 h-8 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-slate-100 dark:hover:bg-slate-600 shadow text-sm flex items-center justify-center transition">
-        🔔
-        <span v-if="notifications.length > 0" class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">{{ notifications.length > 9 ? '9+' : notifications.length }}</span>
-      </button>
-      <div v-if="notificationPanel.visible" class="absolute right-0 top-10 w-72 glass rounded-xl shadow-glass border border-slate-200 dark:border-slate-700 animate-pop max-h-80 overflow-hidden">
-        <div class="px-3 py-2 text-xs font-medium text-slate-500 border-b border-slate-200/50 dark:border-slate-700/50">通知</div>
-        <div v-if="notifications.length === 0" class="px-3 py-6 text-center text-xs text-slate-400">暂无通知</div>
-        <div v-else class="max-h-60 overflow-y-auto">
-          <div v-for="n in notifications.slice(0, 10)" :key="n.id"
-               :class="['px-3 py-2 text-xs border-b border-slate-100 dark:border-slate-700/50 last:border-0', n.type === 'error' ? 'text-red-600' : n.type === 'success' ? 'text-green-600' : n.type === 'warn' ? 'text-amber-600' : 'text-slate-600 dark:text-slate-300']">
-            <div>{{ n.message }}</div>
-            <div class="text-[10px] text-slate-400 mt-0.5">{{ formatNotificationTime(n.time) }}</div>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import Toolbar from '../components/Toolbar.vue'
 import BookmarkCard from '../components/BookmarkCard.vue'
 import PreviewPopup from '../components/PreviewPopup.vue'
 import EditModal from '../components/EditModal.vue'
@@ -574,6 +568,7 @@ import ResultDialog from '../components/ResultDialog.vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import OrganizerPane from '../components/OrganizerPane.vue'
 import PaneSplitter from '../components/PaneSplitter.vue'
+import Sidebar from '../components/Sidebar.vue'
 import { useBookmarksStore } from '../stores/bookmarks.js'
 import { useCategoriesStore } from '../stores/categories.js'
 import { useUiStore } from '../stores/ui.js'
@@ -600,14 +595,10 @@ const viewMode = ref('grid')
 const gridClass = computed(() => 'grid-cols-[repeat(auto-fill,minmax(280px,1fr))]')
 
 // 分栏网格：根据 viewState.organizer.leftPaneWidth 计算左右两栏宽度
-const organizerGridStyle = computed(() => {
-  const ratio = Number(viewState.organizer.leftPaneWidth) || 0.42
-  const leftPct = (ratio * 100).toFixed(2) + '%'
-  const rightPct = ((1 - ratio) * 100).toFixed(2) + '%'
-  return {
-    gridTemplateColumns: `${leftPct} 6px ${rightPct}`
-  }
-})
+// 两边窗等宽（用户要求）
+const organizerGridStyle = computed(() => ({
+  gridTemplateColumns: '1fr 6px 1fr'
+}))
 
 // 兼容：获取扁平列表（用于键盘导航等需要 length 的场景）
 const flatFiltered = computed(() => {
@@ -627,6 +618,21 @@ const editVisible = ref(false)
 const editing = ref(null)
 const showCatMgr = ref(false)
 const showCred = ref(false)
+// ===== 侧边栏事件 handler =====
+function onSidebarNewFolder() {
+  // 在根目录新建（手动分类）
+  newFolderDialog.value = { visible: true, name: '', parentName: '', __parentIdOverride: null }
+  setTimeout(() => newFolderInput.value?.focus(), 50)
+}
+
+function onSidebarOpenRecycle() { bm.showRecycled = true; bm.showArchived = false }
+function onSidebarOpenArchive() { bm.showArchived = true; bm.showRecycled = false }
+
+// 下面这些是占位：原 Sidebar 上没有对应入口，点中后用 toast 提示由 OrganizerPane 顶栏操作
+function onSidebarOpenSnapshots() { window.$toast?.('快照管理请使用 OrganizerPane 顶栏入口', 'info') }
+function onSidebarOpenCredentials() { showCred.value = true }
+function onSidebarOpenCookies() { window.$toast?.('Cookie 管理请使用 OrganizerPane 顶栏入口', 'info') }
+function onSidebarOpenPlugins() { window.$toast?.('插件管理请使用 OrganizerPane 顶栏入口', 'info') }
 
 const newFolderDialog = ref({ visible: false, name: '', parentName: '' })
 const newFolderInput = ref(null)
@@ -645,8 +651,27 @@ async function doCreateFolder() {
   const name = newFolderDialog.value.name.trim()
   if (!name) { newFolderDialog.value.visible = false; return }
   try {
-    const parentId = (bm.activeCategory !== 'all' && bm.activeCategory !== 'unclassified') ? bm.activeCategory : null
-    await cats.add({ name, icon: '📁', color: '#64748b', parentId: parentId || null, tags: [] })
+    let parentId = newFolderDialog.value.__parentIdOverride
+    if (parentId === undefined || parentId === null) {
+      parentId = (bm.activeCategory !== 'all' && bm.activeCategory !== 'unclassified') ? bm.activeCategory : null
+    }
+    const created = await cats.add({ name, icon: '📁', color: '#64748b', parentId: parentId || null, tags: [], origin: 'manual' })
+    // 自动展开父（如果是分栏内新建，确保立即可见）
+    if (parentId) {
+      try {
+        const set = new Set(viewState.organizer.rightExpandedIds)
+        set.add(parentId)
+        viewState.organizer.rightExpandedIds = [...set]
+      } catch {}
+    }
+    // 同步右窗选中到新建的文件夹（兼容旧调用）
+    try {
+      if (created && created.id) viewState.selectRight(created.id)
+    } catch {}
+    // 同步 bm.activeCategory，便于顶部筛选同步
+    try {
+      if (created && created.id) bm.activeCategory = created.id
+    } catch {}
     window.$toast(`文件夹「${name}」已创建`, 'success')
   } catch (e) {
     window.$toast('创建失败: ' + (e.message || e), 'error')
@@ -678,6 +703,11 @@ const dropOverlay = ref(false)
 
 function onDragOverMain(e) {
   const types = e.dataTransfer?.types || []
+  // 拖书签/分类 → 透传，让子组件（OrganizerPane/CategoryTree）处理移动/分类变更
+  if (types.includes('text/bookmark-id') || types.includes('text/category-id')) {
+    return
+  }
+  // 仅当真正拖的是 URL/文本（且看起来像 URL）才显示"添加书签"覆盖层
   if (types.includes('text/uri-list') || types.includes('text/plain')) {
     dropOverlay.value = true
     e.dataTransfer.dropEffect = 'copy'
@@ -686,6 +716,9 @@ function onDragOverMain(e) {
 
 async function onDropMain(e) {
   dropOverlay.value = false
+  // 拖书签/分类 → 透传，让子组件处理
+  const types = e.dataTransfer?.types || []
+  if (types.includes('text/bookmark-id') || types.includes('text/category-id')) return
   const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')
   const trimmed = (url || '').trim().split('\n')[0]
   if (!trimmed || (!trimmed.startsWith('http://') && !trimmed.startsWith('https://'))) {
@@ -888,10 +921,14 @@ async function onNewFolderInPane(side) {
   } else if (side === 'left' && sel && sel !== 'all' && sel !== 'unclassified') {
     parentId = sel
   }
-  const name = window.prompt('新建文件夹名称', '新文件夹')
-  if (!name || !name.trim()) return
-  await cats.add({ name: name.trim(), icon: '📁', color: '#64748b', parentId, tags: [] })
-  if (window.$toast) window.$toast(`文件夹「${name.trim()}」已创建`, 'success')
+  // 直接复用全局 newFolderDialog（带输入框）；Electron 不支持 window.prompt
+  newFolderDialog.value = {
+    visible: true,
+    name: '',
+    parentName: parentId ? (cats.byId[parentId]?.name || '') : '',
+    __parentIdOverride: parentId || null
+  }
+  setTimeout(() => newFolderInput.value?.focus(), 50)
 }
 const quickCats = computed(() => cats.sorted.slice(0, 12))
 const bookmarkMenuItems = computed(() => [
@@ -1082,6 +1119,16 @@ async function onArchive(bookmark) {
   window.$toast(`已归档「${bookmark.title || bookmark.url}」`, 'info')
 }
 
+async function onRestoreCard(bookmark) {
+  await bm.restore(bookmark.id)
+  window.$toast(`已还原「${bookmark.title || bookmark.url}」`, 'success')
+}
+
+async function onUnarchiveCard(bookmark) {
+  await bm.unarchive(bookmark.id)
+  window.$toast(`已取消归档「${bookmark.title || bookmark.url}」`, 'success')
+}
+
 async function batchUnarchiveSelected() {
   const ids = [...bm.selected]
   for (const id of ids) {
@@ -1109,6 +1156,9 @@ async function refreshCacheSize() {
 
 onMounted(async () => {
   await Promise.all([bm.load(), cats.load()])
+  // 启动回填：把 bm.bookmarks 中指向不存在分类的孤儿 categoryId 创建成占位节点，
+  // 确保导入分类树一定能渲染（不依赖 cats.save 是否有完整目录）
+  try { cats.backfillOrphans(bm.bookmarks) } catch (e) { /* 静默：不影响主流程 */ }
   // settings 在 App.vue onMounted 时加载，HomeView 挂载可能早于其完成。
   // 此时若 settings.loaded 仍未 true，等其就绪后再恢复 organizer 视图状态。
   if (!settings.loaded) {
@@ -1120,8 +1170,8 @@ onMounted(async () => {
   }
   viewState.load()
   refreshCacheSize()
-  // 自动校验（按设置）
-  if (settings.settings.autoValidate.onStartup) {
+  // 自动校验（按设置）—— 防御默认值缺失
+  if (settings.settings?.autoValidate?.onStartup) {
     validateAll()
   }
   window.addEventListener('keydown', onKeydown)
@@ -1129,7 +1179,7 @@ onMounted(async () => {
   window.addEventListener('click', closeQuickMenu)
   window.addEventListener('mousemove', onMouseMove)
   // 功能4：监听全局热键快速添加事件
-  quickAddUnlisten = window.api.on('quickAdd', openQuickAdd)
+  quickAddUnlisten = window.api?.on?.('quickAdd', openQuickAdd)
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
@@ -1137,7 +1187,6 @@ onUnmounted(() => {
   window.removeEventListener('click', closeQuickMenu)
   window.removeEventListener('mousemove', onMouseMove)
   if (quickAddUnlisten) quickAddUnlisten()
-  _notifTimers.forEach(t => clearTimeout(t))
 })
 
 function onKeyup(e) {
@@ -1159,6 +1208,15 @@ function onKeydown(e) {
     e.preventDefault()
     if (e.key === 'F11') e.preventDefault() // 阻止浏览器全屏
     bm.focusMode = !bm.focusMode
+    return
+  }
+
+  // 切换预览侧栏：Ctrl+B（输入框内不拦截，让用户正常输入）
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'b') {
+    const tag = document.activeElement?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return
+    e.preventDefault()
+    previewPanel.value.visible = !previewPanel.value.visible
     return
   }
 
@@ -1307,7 +1365,9 @@ async function onDelete(id) {
 }
 
 async function onOpen(b) {
-  openDetail(b)
+  // 走多标签预览面板（之前的行为）
+  addPreviewTab(b.url, b.title || b.url)
+  bm.recordOpen(b.id)
 }
 
 // 悬停预览
@@ -1334,6 +1394,27 @@ function onLeave() {
 }
 const lastMouse = { x: 0, y: 0 }
 function onMouseMove(e) { lastMouse.x = e.clientX; lastMouse.y = e.clientY }
+
+// 卡片上的快捷操作：双击/打开预览（直接打开右侧预览栏）
+function onCardOpen(b) {
+  if (!b) return
+  bm.recordOpen(b.id)
+  // 触发右侧浏览器预览栏切换为这个书签
+  previewPanel.value.url = b.url
+  previewPanel.value.title = b.title || b.url
+  previewPanel.value.visible = true
+}
+
+// 卡片悬停（与 onHover 兼容）
+function onCardHover(b) { onHover(b) }
+function onCardLeave(b) { onLeave() }
+function onCardContext(b, evt) { onContext(b, evt) }
+
+// 卡片快速备注
+function onCardQuickNote({ id, notes }) {
+  bm.update(id, { notes }).catch(() => {})
+  if (window.$toast) window.$toast('备注已保存', 'success')
+}
 
 // 右键快速分类
 function onContext(b, evt) {
@@ -1417,7 +1498,6 @@ async function submitQuickAdd() {
   await bm.add({ url, title, manualSet: true })
   quickAddDialog.value = { visible: false, url: '', title: '' }
   window.$toast('书签已添加', 'success')
-  addNotification('已通过快捷键添加书签: ' + title, 'success')
 }
 
 // 功能6：智能文件夹
@@ -1441,33 +1521,6 @@ async function saveSmartFolder() {
   await settings.save({ smartFolders: folders })
   smartFolderDialog.value = { visible: false, name: '' }
   window.$toast(`智能文件夹「${name}」已保存`, 'success')
-  addNotification('已创建智能文件夹: ' + name, 'success')
-}
-
-// 功能7：通知中心
-const notifications = ref([])
-const notificationPanel = ref({ visible: false })
-const _notifTimers = []
-
-function addNotification(message, type = 'info') {
-  const n = { id: Date.now() + Math.random(), message, type, time: Date.now() }
-  notifications.value.unshift(n)
-  if (notifications.value.length > 50) notifications.value = notifications.value.slice(0, 50)
-  const t = setTimeout(() => {
-    const idx = notifications.value.findIndex(x => x.id === n.id)
-    if (idx !== -1) notifications.value.splice(idx, 1)
-  }, 5000)
-  _notifTimers.push(t)
-}
-
-function formatNotificationTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const now = new Date()
-  if (d.toDateString() === now.toDateString()) {
-    return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0')
-  }
-  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0')
 }
 
 // 多窗口
@@ -1640,11 +1693,9 @@ async function validateAll() {
     await bm.persistAll()
     ui.finishBatchProgress('validate')
     window.$toast(`校验完成: ✅${ok} 💀${dead} ⚠️${warn} 🔁${redirect}` + (unknown > 0 ? ` ❓${unknown}` : ''), 'success')
-    addNotification(`校验完成: ✅${ok} 💀${dead} ⚠️${warn} 🔁${redirect}`, 'success')
   } catch (e) {
     ui.stopBatchProgress('validate')
     window.$toast('校验异常: ' + (e.message || e), 'error')
-    addNotification('校验异常: ' + (e.message || e), 'error')
     console.error('[validateAll] 异常:', e)
   }
 }
@@ -1654,22 +1705,56 @@ async function loadAllPreviews() {
   const list = bm.bookmarks.filter((b) => !b.recycled && !b.archived)
   if (list.length === 0) return window.$toast('没有书签可加载预览', 'warn')
 
-  window.$toast(`开始加载 ${list.length} 个预览…`, 'info')
-  ui.startBatchProgress('preview', list.length)
+  // 仅取有效 http/https URL，过滤掉 javascript:/file:/空值 等
+  const allUrls = list.map((b) => b.url).filter((u) => typeof u === 'string' && /^https?:\/\//i.test(u))
+  if (allUrls.length === 0) return window.$toast('没有可预览的 http/https 书签', 'warn')
+
+  // 监听进度
+  const onProgress = (_e, p) => {
+    if (p && p.total) ui.updateBatchProgress('preview', { done: p.done, total: p.total })
+  }
+  const offProgress = window.api.on ? null : null
+  if (window.api.on) window.api.on('preview:progress', onProgress)
+
+  // 分批：每批 500 条，避免单次请求过大
+  const BATCH = 500
+  const batches = []
+  for (let i = 0; i < allUrls.length; i += BATCH) batches.push(allUrls.slice(i, i + BATCH))
+
+  window.$toast(`开始加载 ${allUrls.length} 个预览（${batches.length} 批）…`, 'info')
+  ui.startBatchProgress('preview', allUrls.length)
+
+  let totalOk = 0
+  let totalErr = 0
+  let totalSkip = 0
   try {
-    const urls = JSON.parse(JSON.stringify(list.map((b) => b.url)))
-    const result = await window.api.invoke('preview:batch', urls)
-    if (result?.error) throw new Error(result.error)
+    for (let i = 0; i < batches.length; i++) {
+      const result = await window.api.invoke('preview:batch', batches[i])
+      if (result?.error) throw new Error(result.error)
+      // 兼容两种返回：纯数组 / {results, skipped}
+      if (Array.isArray(result)) {
+        totalOk += result.filter((r) => r.ok).length
+        totalErr += result.filter((r) => !r.ok).length
+      } else if (result && Array.isArray(result.results)) {
+        totalOk += result.results.filter((r) => r.ok).length
+        totalErr += result.results.filter((r) => !r.ok).length
+        totalSkip += result.skipped || 0
+      }
+      // 同步累计进度
+      ui.updateBatchProgress('preview', { done: Math.min(allUrls.length, (i + 1) * BATCH), total: allUrls.length })
+    }
     ui.clearPreview()
     refreshCacheSize()
     ui.finishBatchProgress('preview')
-    window.$toast('预览加载完成', 'success')
-    addNotification('预览加载完成', 'success')
+    const skipMsg = totalSkip > 0 ? `，已跳过 ${totalSkip} 个无效 URL` : ''
+    const errMsg = totalErr > 0 ? `，${totalErr} 个抓取失败` : ''
+    window.$toast(`预览加载完成：成功 ${totalOk}${errMsg}${skipMsg}`, totalErr > 0 ? 'warn' : 'success')
   } catch (e) {
     ui.stopBatchProgress('preview')
     window.$toast('预览异常: ' + (e.message || e), 'error')
-    addNotification('预览异常: ' + (e.message || e), 'error')
     console.error('[loadAllPreviews] 异常:', e)
+  } finally {
+    if (window.api.off) window.api.off('preview:progress', onProgress)
   }
 }
 
@@ -1805,7 +1890,8 @@ async function importHtml() {
     importResult.value = { loading: false, source: 'HTML 书签', imported: r.imported, skipped: r.skipped || 0, parsed: r.parsed }
     bm.activeCategory = 'all'
     bm.statusFilter = 'all'
-    await bm.load()
+    await Promise.all([bm.load(), cats.load()])
+    cats.backfillOrphans(bm.bookmarks)
     fetchMissingMetadata(bm.bookmarks)
   } else if (r.parsed === 0) {
     showResult('导入结果', '📭', '该文件中未找到有效的书签链接', ['请确认文件是浏览器导出的书签 HTML'])
@@ -1825,7 +1911,8 @@ async function importCsv() {
     importResult.value = { loading: false, source: 'CSV 文件', imported: r.imported, skipped: r.skipped || 0, parsed: r.parsed }
     bm.activeCategory = 'all'
     bm.statusFilter = 'all'
-    await bm.load()
+    await Promise.all([bm.load(), cats.load()])
+    cats.backfillOrphans(bm.bookmarks)
     fetchMissingMetadata(bm.bookmarks)
   } else if (r.parsed === 0) {
     showResult('导入结果', '📭', '该 CSV 中未找到有效的书签链接', ['请确认 CSV 包含 url/link/href 列'])
@@ -1845,13 +1932,37 @@ async function importFromBrowser(b) {
     importResult.value = { loading: false, source: b.name, imported: r.imported, skipped: r.skipped || 0, parsed: r.parsed }
     bm.activeCategory = 'all'
     bm.statusFilter = 'all'
-    await bm.load()
+    await Promise.all([bm.load(), cats.load()])
+    cats.backfillOrphans(bm.bookmarks)
     fetchMissingMetadata(bm.bookmarks)
   } else if (r.parsed === 0) {
     showResult('导入结果', '📭', `在 ${b.name} 中未找到书签`)
   } else {
     showResult('导入结果', 'ℹ️', '所有书签已存在（无新增）')
   }
+}
+
+// 右窗导出菜单路由（导出 Chrome HTML / 网页 / JSON / Markdown / 当前分类）
+function onExportAction(actionId) {
+  switch (actionId) {
+    case 'exportCategory':
+      window.$toast?.('请使用分类卡片内的导出按钮', 'info')
+      return
+    case 'exportHtml': return exportHtml()
+    case 'exportStyledHtml': return exportStyledHtml()
+    case 'exportJson': return exportJson()
+    case 'exportMarkdown': return exportMarkdown()
+    default: return
+  }
+}
+
+function onStatusFilterChanged(side, value) {
+  // 状态筛选变化由 pane 内部 v-model 直接处理，这里只是占位
+  if (window.$toast) window.$toast('状态筛选已切换', 'info')
+}
+
+function onReadFilterChanged(side, value) {
+  if (window.$toast) window.$toast('阅读筛选已切换', 'info')
 }
 
 async function exportHtml() {
@@ -1884,6 +1995,7 @@ async function importJson() {
   if (r.imported > 0) {
     importResult.value = { loading: false, source: 'JSON 备份', imported: r.imported, skipped: 0, parsed: r.parsed || r.imported }
     await Promise.all([bm.load(), cats.load()])
+    cats.backfillOrphans(bm.bookmarks)
   } else {
     showResult('导入结果', 'ℹ️', '该备份文件中没有书签数据')
   }
@@ -1908,7 +2020,8 @@ async function importPocketCsv() {
     importResult.value = { loading: false, source: 'Pocket', imported: r.imported, skipped: r.skipped || 0, parsed: r.parsed }
     bm.activeCategory = 'all'
     bm.statusFilter = 'all'
-    await bm.load()
+    await Promise.all([bm.load(), cats.load()])
+    cats.backfillOrphans(bm.bookmarks)
     fetchMissingMetadata(bm.bookmarks)
   } else if (r.parsed === 0) {
     showResult('导入结果', '📭', '该 CSV 中未找到有效书签')

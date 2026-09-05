@@ -237,6 +237,65 @@ export function registerIpc() {
     return true
   })
 
+  // 批量更新书签（仅走白名单字段），用于批量移动分类等场景
+  safeHandle('bm:updateBatch', async (_e, items) => {
+    if (!Array.isArray(items) || items.length === 0) return { error: '批量更新数据无效', count: 0 }
+    if (items.length > 5000) return { error: '单次批量更新不能超过 5000 条', count: 0 }
+    const list = loadBookmarks()
+    let count = 0
+    const changedUrls = []
+    for (const it of items) {
+      if (!it || typeof it !== 'object') continue
+      const { id, data } = it
+      if (!isValidId(id) || !data || typeof data !== 'object' || Array.isArray(data)) continue
+      const idx = list.findIndex((x) => x.id === id)
+      if (idx === -1) continue
+      const cleanPatch = {}
+      for (const key of Object.keys(data)) {
+        if (BM_UPDATE_ALLOWED_FIELDS.has(key)) cleanPatch[key] = data[key]
+      }
+      const { _isManual, ...safePatch } = cleanPatch
+      const urlChanged = safePatch.url && safePatch.url !== list[idx].url
+      if (safePatch.url !== undefined && !isValidHttpUrl(safePatch.url)) continue
+      list[idx] = { ...list[idx], ...safePatch, updatedAt: Date.now() }
+      if (safePatch.categoryId !== undefined && _isManual) {
+        list[idx].manualCategoryId = data.categoryId
+        list[idx].manualSet = true
+      }
+      if (urlChanged) changedUrls.push(safePatch.url)
+      count++
+    }
+    if (count > 0) saveBookmarks(list)
+    // URL 变化的批量重新抓图标/截图（每条独立异步）
+    for (const url of changedUrls) {
+      fetchFavicon(url).then((fname) => {
+        if (!fname) return
+        const arr = loadBookmarks()
+        for (let i = 0; i < arr.length; i++) {
+          if (arr[i].url === url) {
+            arr[i].favicon = fname
+            send('bm:favicon-updated', { id: arr[i].id, favicon: fname })
+            break
+          }
+        }
+        saveBookmarks(arr)
+      }).catch(() => {})
+      captureScreenshot(url).then((result) => {
+        if (!result.ok) return
+        const arr = loadBookmarks()
+        for (let i = 0; i < arr.length; i++) {
+          if (arr[i].url === url) {
+            arr[i].screenshot = result.file
+            send('bm:screenshot-updated', { id: arr[i].id, screenshot: result.file })
+            break
+          }
+        }
+        saveBookmarks(arr)
+      }).catch(() => {})
+    }
+    return { count }
+  })
+
   safeHandle('bm:removeDuplicates', async () => {
     const list = loadBookmarks()
     const seen = new Map()
@@ -362,11 +421,29 @@ export function registerIpc() {
     return readAsDataUrl(previewImagePath(name))
   })
   safeHandle('preview:batch', async (_e, urls) => {
-    if (!Array.isArray(urls) || urls.length > 1000 || !urls.every(isValidHttpUrl)) return { error: '预览 URL 列表无效' }
-    return generateBatch(urls, {
+    if (!Array.isArray(urls) || urls.length === 0) return { error: '预览 URL 列表为空' }
+    // 单次 IPC 仍限制 5000（防止一次塞太多内存），超出会自动分批串行处理
+    if (urls.length > 5000) {
+      const all = []
+      for (let i = 0; i < urls.length; i += 500) {
+        send('preview:progress', { done: i, total: urls.length, currentUrl: '' })
+        const batch = urls.slice(i, i + 500)
+        const valid = batch.filter(isValidHttpUrl)
+        if (valid.length === 0) continue
+        const results = await generateBatch(valid, { limit: 4 })
+        all.push(...results)
+        send('preview:progress', { done: i + batch.length, total: urls.length, currentUrl: '' })
+      }
+      return all
+    }
+    const valid = urls.filter(isValidHttpUrl)
+    const skipped = urls.length - valid.length
+    if (valid.length === 0) return { error: '没有有效的 http/https URL 可预览', skipped }
+    const results = await generateBatch(valid, {
       limit: 4,
       onProgress: (done, total, currentUrl) => send('preview:progress', { done, total, currentUrl })
     })
+    return skipped > 0 ? { results, skipped } : results
   })
   safeHandle('preview:cacheSize', async () => {
     return { bytes: getImagesSize(), mb: +(getImagesSize() / 1024 / 1024).toFixed(2) }
@@ -494,7 +571,10 @@ export function registerIpc() {
         const newCat = {
           id: 'cat-import-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5),
           name: part, icon: '📁', color: '#64748b',
-          order: cats.length, parentId, tags: []
+          order: cats.length, parentId, tags: [],
+          // 标记为导入来源：左窗分类树；不会被右窗的 manualTree 显示
+          origin: 'imported',
+          manual: false
         }
         cats.push(newCat)
         lastCatId = newCat.id
@@ -579,9 +659,13 @@ export function registerIpc() {
     try {
       html = fs.readFileSync(filePath, 'utf8')
     } catch (e) {
-      // 回退：先读 buffer，尝试 utf8，失败则尝试 gbk
       const buf = fs.readFileSync(filePath)
-      try { html = buf.toString('utf8') } catch { html = buf.toString('latin1') }
+      html = buf.toString('utf8')
+    }
+    // 启发式：若 UTF-8 解出大量 \uFFFD，说明原文件是 GB18030/GBK 等中文编码
+    if (looksLikeWrongEncoding(html)) {
+      const buf = fs.readFileSync(filePath)
+      html = decodeAsGbk(buf)
     }
     // 移除 BOM
     if (html.charCodeAt(0) === 0xFEFF) html = html.slice(1)
@@ -631,6 +715,9 @@ export function registerIpc() {
     try {
       const buf = fs.readFileSync(res.filePaths[0])
       csvText = buf.toString('utf8')
+      if (looksLikeWrongEncoding(csvText)) {
+        csvText = decodeAsGbk(buf)
+      }
       if (csvText.charCodeAt(0) === 0xFEFF) csvText = csvText.slice(1)
     } catch (e) {
       return { imported: 0, error: '文件读取失败: ' + (e.message || '') }
@@ -1136,4 +1223,30 @@ function readAsDataUrl(filePath) {
     const mime = ext === 'jpg' ? 'jpeg' : ext
     return `data:image/${mime || 'png'};base64,${buf.toString('base64')}`
   } catch { return null }
+}
+
+// 启发式检测 UTF-8 解码是否失败（替换字符占比高 + 中文浏览器导出特征）
+function looksLikeWrongEncoding(text) {
+  if (!text) return false
+  // 出现 U+FFFD 替换字符 -> 几乎肯定是编码错了
+  let replacement = 0
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 0xFFFD) replacement++
+    if (replacement >= 3) return true
+  }
+  return false
+}
+
+// 不依赖第三方库的内置 GBK/GB18030 解码（覆盖中文浏览器导出格式）
+// 与 iconv-lite 行为一致，处理双字节高位 0x81-0xFE / 低位 0x40-0xFE
+function decodeAsGbk(buf) {
+  try {
+    const TextDecoder = globalThis.TextDecoder
+    // Node 18+ 提供 GB18030 解码器（GB18030 是 GBK 的超集，行为一致）
+    if (TextDecoder) {
+      try { return new TextDecoder('gb18030').decode(buf) } catch { /* fallthrough */ }
+    }
+  } catch { /* fallthrough */ }
+  // 退而求其次：latin1，绝不抛
+  try { return buf.toString('latin1') } catch { return '' }
 }

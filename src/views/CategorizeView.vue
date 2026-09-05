@@ -1,5 +1,22 @@
 <template>
-  <div class="h-screen flex flex-col bg-theme">
+  <div class="h-screen flex bg-theme">
+    <Sidebar
+      ref="sidebarRef"
+      @manage-categories="showCatMgr = true"
+      @new-folder="onSidebarNewFolder"
+      @new-child-folder="onSidebarNewChildFolder"
+      @toggle-preview="() => {}"
+      @open-snapshots="() => $toast?.('请在主页操作快照', 'info')"
+      @open-credentials="() => $toast?.('请在主页操作凭证', 'info')"
+      @open-cookies="() => $toast?.('请在主页操作 Cookie', 'info')"
+      @open-plugins="() => $toast?.('请在主页操作插件', 'info')"
+      @open-recycle="bm.showRecycled = true; bm.showArchived = false"
+      @close-recycle="bm.showRecycled = false"
+      @open-archive="bm.showArchived = true; bm.showRecycled = false"
+      @close-archive="bm.showArchived = false"
+      @new-smart-folder="() => {}"
+    />
+    <div class="flex-1 flex flex-col min-w-0">
     <!-- 顶栏 -->
     <div class="px-5 py-3 bg-[var(--surface-base)] border-b border-[var(--stroke-subtle)] flex items-center gap-3 shrink-0">
       <router-link to="/" custom v-slot="{ navigate }">
@@ -91,181 +108,26 @@
     </div>
 
     <!-- ============ 步骤2: 分类整理 ============ -->
-    <div v-show="step === 2" class="flex-1 flex min-h-0">
-      <!-- 左侧：分类管理 -->
-      <div class="w-80 shrink-0 glass border-r border-white/30 dark:border-slate-700/50 flex flex-col">
-        <!-- 分类操作工具条 -->
-        <div class="p-3 border-b border-slate-200/30 dark:border-slate-700/50 space-y-2">
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-semibold text-slate-500">分类管理</span>
-            <button @click="onNewCategory" class="ml-auto text-xs text-accent hover:underline">＋ 新建</button>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <button @click="saveCategoryState" class="btn-ghost text-xs py-1 px-2 flex-1 justify-center" title="保存当前所有书签的分类状态">📸 存状态</button>
-            <button @click="showSnapshots = !showSnapshots" class="btn-ghost text-xs py-1 px-2 flex-1 justify-center" title="恢复分类状态">🔄 恢复</button>
-          </div>
-        </div>
-
-        <!-- 快照列表 -->
-        <div v-if="showSnapshots" class="p-2 border-b border-slate-200/30 dark:border-slate-700/50 max-h-48 overflow-y-auto">
-          <div class="text-[10px] text-slate-400 mb-1 px-1">分类状态快照</div>
-          <div v-if="snapshots.length === 0" class="text-xs text-slate-400 text-center py-2">暂无快照</div>
-          <div v-for="snap in snapshots" :key="snap.id"
-               class="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700/50 text-xs">
-            <span class="flex-1 truncate">{{ snap.name }}</span>
-            <span class="text-[10px] text-slate-400">{{ snap.count }}项</span>
-            <button @click="restoreCategoryState(snap.id)" class="text-accent hover:underline" title="恢复">恢复</button>
-            <button @click="deleteSnapshot(snap.id)" class="text-red-400 hover:text-red-600" title="删除">✕</button>
-          </div>
-        </div>
-
-        <!-- 分类列表 -->
-        <div class="flex-1 overflow-y-auto p-2 space-y-1">
-          <!-- 全部 / 未分类 -->
-          <button @click="selectedCatId = 'all'"
-                  :class="catRowClass('all')">
-            <span>📑</span><span class="flex-1 text-left">全部书签</span>
-            <span class="text-[10px] opacity-70">{{ bm.bookmarks.filter(b => !b.recycled && !b.archived).length }}</span>
-          </button>
-          <button @click="selectedCatId = 'unclassified'"
-                  :class="catRowClass('unclassified')">
-            <span>❓</span><span class="flex-1 text-left">未分类</span>
-            <span class="text-[10px] opacity-70">{{ unclassifiedCount }}</span>
-          </button>
-          <div class="h-px bg-slate-200/50 dark:bg-slate-700/50 my-1"></div>
-
-          <!-- 自定义分类 -->
-          <div v-for="c in cats.sorted" :key="c.id">
-            <!-- 分类行 -->
-            <div @dragover.prevent="dragOverCat = c.id"
-                 @dragleave="dragOverCat = null"
-                 @drop="onDropToCat($event, c.id)"
-                 :class="[catRowClass(c.id), dragOverCat === c.id ? 'ring-2 ring-accent' : '']"
-                 @click="selectedCatId = c.id; expandedCat = expandedCat === c.id ? null : c.id">
-              <span class="cursor-pointer" @click.stop="expandedCat = expandedCat === c.id ? null : c.id">
-                {{ expandedCat === c.id ? '▾' : '▸' }}
-              </span>
-              <span>{{ c.icon || '📁' }}</span>
-              <span class="flex-1 text-left truncate">{{ c.name }}</span>
-              <span class="text-[10px] opacity-70">{{ catCount(c.id) }}</span>
-            </div>
-
-            <!-- 展开编辑区 -->
-            <div v-if="expandedCat === c.id" class="ml-4 mr-1 mt-1 mb-2 rounded-lg bg-slate-50 dark:bg-slate-700/30 p-2.5 space-y-2">
-              <!-- 图标/名称/颜色 -->
-              <div class="flex items-center gap-1.5">
-                <input v-model="c.icon" @change="onCatUpdate(c)" class="w-7 text-center text-sm bg-white dark:bg-slate-700 rounded outline-none py-0.5" maxlength="2" />
-                <input v-model="c.name" @change="onCatUpdate(c)" class="flex-1 text-xs bg-white dark:bg-slate-700 rounded px-1.5 py-0.5 outline-none" />
-                <input v-model="c.color" type="color" @change="onCatUpdate(c)" class="w-6 h-6 rounded cursor-pointer bg-transparent border-0" />
-              </div>
-              <!-- 标签管理 -->
-              <div class="flex flex-wrap items-center gap-1">
-                <span v-for="(t, ti) in (c.tags || [])" :key="ti"
-                      class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium chip-accent">
-                  {{ t }}
-                  <button @click.stop="removeCatTag(c, ti)" class="hover:text-red-500 leading-none">×</button>
-                </span>
-                <input :ref="el => tagInputs[c.id] = el"
-                       v-model="tagInputVals[c.id]"
-                       @keydown.enter.prevent="addCatTag(c)"
-                       @keydown.,.prevent="addCatTag(c)"
-                       @click.stop
-                       class="w-14 bg-transparent outline-none text-[10px] py-0.5 text-slate-400"
-                       placeholder="+标签" />
-              </div>
-              <!-- 操作按钮 -->
-              <div class="flex items-center gap-1 pt-1">
-                <button @click.stop="mirrorCategory(c)" class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50" title="镜像此分类">📋 镜像</button>
-                <button @click.stop="exportCategory(c)" class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50" title="导出此分类">📤 导出</button>
-                <button @click.stop="deleteCategory(c)" class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/30 text-red-500 hover:bg-red-200 dark:hover:bg-red-900/50 ml-auto" title="删除分类">🗑️ 删除</button>
-              </div>
-            </div>
-          </div>
-          <button @click="onNewCategory" class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-accent hover:bg-slate-100 dark:hover:bg-slate-700/50 transition mt-1">
-            <span>＋</span><span>新建分类</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- 右侧：书签列表 -->
-      <div class="flex-1 flex flex-col min-w-0">
-        <!-- 工具条 -->
-        <div class="px-4 py-2.5 flex items-center gap-2 border-b border-slate-200/30 dark:border-slate-700/50 flex-wrap">
-          <input v-model="searchQ" placeholder="搜索书签…" class="input text-sm flex-1 max-w-xs" />
-          <select v-model="statusFilter" class="input w-auto text-sm">
-            <option value="all">全部状态</option>
-            <option value="ok">✅ 正常</option>
-            <option value="warn">⚠️ 异常</option>
-            <option value="dead">💀 失效</option>
-            <option value="unknown">❓ 未知</option>
-          </select>
-          <span v-if="selectedIds.size > 0" class="text-xs text-accent font-medium">已选 {{ selectedIds.size }} 项</span>
-          <select v-if="selectedIds.size > 0" v-model="batchCatId" @change="doBatchMove" class="input w-auto text-sm">
-            <option value="">批量分配到…</option>
-            <option value="__unclassified__">未分类</option>
-            <option v-for="c in cats.sorted" :key="c.id" :value="c.id">{{ c.icon }} {{ c.name }}</option>
-          </select>
-          <button v-if="selectedIds.size > 0" @click="selectedIds = new Set()" class="btn-ghost text-xs py-0.5">取消选择</button>
-        </div>
-
-        <!-- 书签列表 -->
-        <div class="flex-1 overflow-y-auto p-4">
-          <div v-if="filteredList.length === 0" class="h-full flex flex-col items-center justify-center text-slate-400">
-            <div class="text-5xl mb-3">📭</div>
-            <div class="text-sm">{{ bm.bookmarks.length === 0 ? '还没有书签，请先导入' : '没有匹配的书签' }}</div>
-            <button v-if="bm.bookmarks.length === 0" @click="step = 1" class="btn-primary mt-4 text-sm">去导入书签</button>
-          </div>
-          <div class="grid gap-2.5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-            <div v-for="b in filteredList" :key="b.id"
-                 draggable="true"
-                 @dragstart="onDragStart($event, b.id)"
-                 @dragend="onDragEnd"
-                 @click.stop="toggleSelect(b.id)"
-                 @contextmenu.prevent="openBookmarkMenu(b, $event)"
-                 :class="['win-surface rounded-lg p-3 border cursor-pointer transition-all duration-150 hover:shadow-card',
-                          selectedIds.has(b.id) ? 'ring-2 ring-accent border-accent' : 'border-[var(--stroke-subtle)] hover:border-accent/40']">
-              <div class="flex items-start gap-2.5">
-                <div class="w-8 h-8 rounded-lg bg-white dark:bg-slate-700 flex items-center justify-center shrink-0 shadow-sm ring-1 ring-black/5 overflow-hidden">
-                  <img v-if="b.favicon && faviconUrls.get(b.favicon)" :src="faviconUrls.get(b.favicon)" class="w-5 h-5 object-contain" @error="$event.target.style.display='none'" />
-                  <span v-else class="text-sm font-semibold" :style="{ color: letterColor(b.title || b.url) }">{{ letter(b.title || b.url) }}</span>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <div class="text-sm font-medium truncate" :title="b.title">{{ b.title || b.url }}</div>
-                  <div class="text-xs text-slate-400 truncate">{{ host(b.url) }}</div>
-                </div>
-                <span :class="['w-2 h-2 rounded-full shrink-0 mt-1', statusDotClass(b.status)]" :title="statusText(b.status)"></span>
-              </div>
-              <div class="mt-2 flex items-center gap-1.5">
-                <select :value="b.categoryId || ''"
-                        @click.stop
-                        @change="onCatChange(b.id, $event.target.value)"
-                        class="input text-xs py-0.5 px-1.5 flex-1">
-                  <option value="">未分类</option>
-                  <option v-for="c in cats.sorted" :key="c.id" :value="c.id">{{ c.icon }} {{ c.name }}</option>
-                </select>
-                <button @click.stop="cycleReadStatus(b.id)"
-                        :class="['text-xs px-1.5 py-0.5 rounded transition', readStatusClass(b.readStatus)]"
-                        :title="'阅读: ' + readStatusText(b.readStatus)">
-                  {{ readStatusIcon(b.readStatus) }}
-                </button>
-                <button @click.stop="bm.togglePin(b.id)"
-                        :class="['text-xs px-1.5 py-0.5 rounded transition',
-                                 b.pinned ? 'text-amber-500 bg-amber-100 dark:bg-amber-900/30' : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700']"
-                        :title="b.pinned ? '取消置顶' : '置顶'">
-                  {{ b.pinned ? '⭐' : '☆' }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 底部：下一步 -->
-        <div class="px-4 py-2 border-t border-slate-200/30 dark:border-slate-700/50 flex items-center justify-between">
-          <span class="text-xs text-slate-400">{{ filteredList.length }} 个书签显示中</span>
-          <button @click="step = 3" class="btn-accent text-sm">下一步：导出到浏览器 →</button>
-        </div>
+    <div v-show="step === 2" class="flex-1 min-h-0 p-3">
+      <div class="h-full grid gap-0" :style="organizerGridStyle">
+        <OrganizerPane
+          side="left"
+          @new-folder="onNewFolderInPane('left')"
+          @import="importHtml"
+          @add="openQuickAdd"
+          @manage-categories="showCatMgr = true"
+        />
+        <div class="w-1.5 cursor-col-resize bg-[var(--stroke-subtle)]/60 hover:bg-accent/40 transition" title="等宽分隔条"></div>
+        <OrganizerPane
+          side="right"
+          @new-folder="onNewFolderInPane('right')"
+          @add="openQuickAdd"
+          @manage-categories="showCatMgr = true"
+        />
       </div>
     </div>
+
+    <CategoryManager v-if="showCatMgr" v-model="showCatMgr" />
 
     <!-- ============ 步骤3: 导出到浏览器 ============ -->
     <div v-show="step === 3" class="flex-1 overflow-y-auto p-6">
@@ -401,6 +263,21 @@
         </div>
       </transition>
     </teleport>
+
+    <!-- 快速添加书签弹框 -->
+    <teleport to="body">
+      <div v-if="quickAddDialog.visible" class="fixed inset-0 z-[400] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="quickAddDialog.visible = false">
+        <div class="w-[400px] glass rounded-2xl shadow-glass p-5 animate-pop">
+          <h3 class="text-sm font-semibold mb-3">快速添加书签</h3>
+          <input v-model="quickAddDialog.url" @keydown.enter="submitQuickAdd" class="input text-sm mb-2 font-mono" placeholder="URL（自动从剪贴板读取）" ref="quickAddUrlInput" />
+          <input v-model="quickAddDialog.title" @keydown.enter="submitQuickAdd" class="input text-sm mb-3" placeholder="标题（可选）" />
+          <div class="flex justify-end gap-2">
+            <button @click="quickAddDialog.visible = false" class="btn-ghost text-xs">取消</button>
+            <button @click="submitQuickAdd" class="btn-accent text-xs" :disabled="!quickAddDialog.url.trim()">添加</button>
+          </div>
+        </div>
+      </div>
+    </teleport>
     <ContextMenu
       :open="bookmarkContext.visible"
       :x="bookmarkContext.x"
@@ -409,19 +286,113 @@
       @close="bookmarkContext.visible = false"
       @select="item => item.action?.()"
     />
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, reactive, watch } from 'vue'
 import ContextMenu from '../components/ContextMenu.vue'
+import OrganizerPane from '../components/OrganizerPane.vue'
+import CategoryManager from '../components/CategoryManager.vue'
+import Sidebar from '../components/Sidebar.vue'
 import { useBookmarksStore } from '../stores/bookmarks.js'
 import { useCategoriesStore } from '../stores/categories.js'
 import { useUiStore } from '../stores/ui.js'
+import { useViewStateStore } from '../stores/viewState.js'
 
 const bm = useBookmarksStore()
 const cats = useCategoriesStore()
 const ui = useUiStore()
+const viewState = useViewStateStore()
+
+// 导入结果 ref（供 importHtml 用）
+const importResultLocal = ref(null)
+
+// 左窗 OrganizerPane 的「导入」：复用 HomeView 的导入流程
+async function importHtml() {
+  importResultLocal.value = { loading: true, source: '导入 HTML 书签' }
+  let r
+  try { r = await getDesktopApi().invoke('io:importHtml') } catch(e) { importResultLocal.value = null; if(window.$toast) window.$toast('导入失败: ' + (e.message||e), 'error'); return }
+  importResultLocal.value = null
+  if (!r || r.canceled) return
+  if (r.error) { if (window.$toast) window.$toast('导入失败: ' + r.error, 'error'); return }
+  if (r.imported > 0) {
+    await bm.load()
+    await cats.load()
+    if (window.$toast) window.$toast(`成功导入 ${r.imported} 个书签`, 'success')
+  }
+}
+
+// 步骤2 双窗等宽布局（不再允许拖拽）
+const organizerGridStyle = computed(() => ({
+  gridTemplateColumns: '1fr 6px 1fr'
+}))
+const showCatMgr = ref(false)
+const sidebarRef = ref(null)
+
+function onSidebarNewFolder() {
+  if (window.$toast) window.$toast('请到 OrganizerPane 右键内"新建子文件夹"', 'info')
+}
+function onSidebarNewChildFolder(parentId, parentName) {
+  if (window.$toast) window.$toast(`请到 OrganizerPane 右键新建子文件夹（${parentName || ''}）`, 'info')
+}
+
+// 新建文件夹：左窗新建顶级，右窗新建顶级（用户可在 OrganizerPane 右键内创建子文件夹）
+async function onNewFolderInPane(side) {
+  // 弹一个最小化的输入框（Electron 不支持 window.prompt）
+  const name = window.prompt('输入文件夹名称')
+  if (!name || !name.trim()) return
+  const trimmed = name.trim()
+  const sel = side === 'left' ? viewState.organizer.leftSelectedKey : viewState.organizer.rightSelectedKey
+  let parentId = null
+  if (sel && sel !== 'all' && sel !== 'unclassified') parentId = sel
+  const created = await cats.add({ name: trimmed, icon: '📁', color: '#64748b', parentId, tags: [], origin: 'manual' })
+  if (created && created.id) {
+    // 自动展开父节点
+    if (parentId) {
+      const set = new Set(viewState.organizer.rightExpandedIds)
+      set.add(parentId)
+      viewState.organizer.rightExpandedIds = [...set]
+    }
+    // 同步选中到新建的文件夹
+    try { viewState.selectRight(created.id) } catch {}
+    window.$toast?.(`文件夹「${trimmed}」已创建`, 'success')
+  }
+}
+
+// ---- 快速添加书签（与 HomeView 同款） ----
+const quickAddDialog = ref({ visible: false, url: '', title: '' })
+const quickAddUrlInput = ref(null)
+
+async function openQuickAdd() {
+  let clipboardUrl = ''
+  try {
+    clipboardUrl = await navigator.clipboard.readText()
+    if (!clipboardUrl || !clipboardUrl.trim().startsWith('http')) {
+      clipboardUrl = ''
+    } else {
+      clipboardUrl = clipboardUrl.trim()
+    }
+  } catch { /* 权限被拒就忽略 */ }
+  quickAddDialog.value = { visible: true, url: clipboardUrl, title: '' }
+  setTimeout(() => quickAddUrlInput.value?.focus(), 100)
+}
+
+async function submitQuickAdd() {
+  const url = quickAddDialog.value.url.trim()
+  if (!url) return
+  const title = quickAddDialog.value.title.trim() || url
+  // 优先选当前右侧打开的手动分类；否则放入「未分类」
+  const rkey = viewState.organizer.rightSelectedKey
+  let categoryId = null
+  if (rkey && rkey !== 'all' && rkey !== 'unclassified' && !rkey.startsWith('smart:')) {
+    categoryId = rkey
+  }
+  await bm.add({ url, title, categoryId, manualSet: true })
+  quickAddDialog.value = { visible: false, url: '', title: '' }
+  window.$toast?.('书签已添加', 'success')
+}
 
 // ---- 步骤 ----
 const steps = [
@@ -829,6 +800,7 @@ function statusText(status) {
 onMounted(async () => {
   if (!bm.loaded) await bm.load()
   if (!cats.loaded) await cats.load()
+  if (!viewState.loaded) viewState.load()
   await loadSnapshots()
   try {
     const r = await window.api.invoke('io:detectBrowsers')

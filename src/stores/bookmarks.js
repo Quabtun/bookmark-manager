@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { useSettingsStore } from './settings.js'
 import { useCategoriesStore } from './categories.js'
 
@@ -11,7 +11,54 @@ export const useBookmarksStore = defineStore('bookmarks', () => {
   const activeCategory = ref('all') // 'all' | 'unclassified' | categoryId
   const statusFilter = ref('all')   // 'all' | 'ok' | 'dead' | 'warn' | 'unknown'
   const tagFilter = ref('')        // '' = 不筛选, 'tag-name' = 按标签筛选
-  const selected = ref(new Set())    // 多选书签 ID 集合
+  // 多选书签 ID：按窗隔离，selected 是当前活动窗的视图
+  const selectedByPane = reactive({ left: new Set(), right: new Set() })
+  const activeSide = ref('left')
+  // selected 是 ref 代理：getter 返回当前活动窗的 Set 引用，setter 整体替换
+  const selected = ref(selectedByPane.left)
+  // 双向同步：selected 改变 → 写回 selectedByPane[当前活动窗]
+  watch(selected, (v) => {
+    if (activeSide.value === 'left' || activeSide.value === 'right') {
+      selectedByPane[activeSide.value] = v instanceof Set ? v : new Set(v || [])
+    }
+  })
+  watch(activeSide, (side) => {
+    if (side === 'left' || side === 'right') selected.value = selectedByPane[side]
+  }, { immediate: true })
+  function setActiveSide(side) {
+    activeSide.value = (side === 'left' || side === 'right') ? side : 'left'
+    selected.value = selectedByPane[activeSide.value]
+  }
+  function paneSet(side) { return (side === 'left' || side === 'right') ? selectedByPane[side] : new Set() }
+  function paneSize(side) { return paneSet(side).size }
+  function paneHas(side, id) { return paneSet(side).has(id) }
+  function paneAdd(side, id) {
+    if (side !== 'left' && side !== 'right') return
+    const s = new Set(selectedByPane[side])
+    s.add(id)
+    selectedByPane[side] = s
+    if (activeSide.value === side) selected.value = s
+  }
+  function paneDelete(side, id) {
+    if (side !== 'left' && side !== 'right') return
+    const s = new Set(selectedByPane[side])
+    s.delete(id)
+    selectedByPane[side] = s
+    if (activeSide.value === side) selected.value = s
+  }
+  function paneClear(side) {
+    if (side !== 'left' && side !== 'right') return
+    const s = new Set()
+    selectedByPane[side] = s
+    if (activeSide.value === side) selected.value = s
+  }
+  function paneSelectAll(side, ids) {
+    if (side !== 'left' && side !== 'right') return
+    const s = new Set(ids || [])
+    selectedByPane[side] = s
+    if (activeSide.value === side) selected.value = s
+  }
+  const lastClickedId = ref('')     // 单击/Shift 范围选择的锚点
   const sortBy = ref('addedAt')     // 'title' | 'addedAt' | 'status' | 'url' | 'frequency' | 'custom'
   const sortOrder = ref('desc')      // 'asc' | 'desc'
   const dateFrom = ref('')           // 高级筛选：日期起
@@ -20,6 +67,33 @@ export const useBookmarksStore = defineStore('bookmarks', () => {
   const groupByCategory = ref(false) // 按分类分组显示
   const readFilter = ref('')         // 阅读状态筛选：'' / 'unread' / 'reading' / 'done'
   const focusMode = ref(false)      // 专注模式
+
+  // 左右窗独立筛选状态（不持久化，每次会话从默认开始）
+  const leftPane = reactive({
+    statusFilter: 'all',
+    readFilter: '',
+    sortBy: 'addedAt',
+    sortOrder: 'desc'
+  })
+  const rightPane = reactive({
+    statusFilter: 'all',
+    readFilter: '',
+    sortBy: 'addedAt',
+    sortOrder: 'desc'
+  })
+
+  function getPane(side) {
+    return side === 'left' ? leftPane : rightPane
+  }
+  function setPaneSort(side, field) {
+    const pane = getPane(side)
+    if (pane.sortBy === field) {
+      pane.sortOrder = pane.sortOrder === 'asc' ? 'desc' : 'asc'
+    } else {
+      pane.sortBy = field
+      pane.sortOrder = field === 'title' ? 'asc' : 'desc'
+    }
+  }
 
   // 回收站
   const showRecycled = ref(false)
@@ -432,6 +506,31 @@ export const useBookmarksStore = defineStore('bookmarks', () => {
     }
   }
 
+  // 批量移动书签到分类（一次 IPC，事务友好）
+  async function moveBatchToCategory(ids, categoryId, opts = {}) {
+    const list = ids.map(id => ({ id, b: getById(id) })).filter(x => x.b)
+    if (list.length === 0) return 0
+    const snapshots = list.map(x => ({ id: x.id, data: JSON.parse(JSON.stringify(x.b)) }))
+    const updates = list.map(x => ({ id: x.id, data: { categoryId, _isManual: true } }))
+    const r = await window.api.invoke('bm:updateBatch', updates)
+    if (r && !r.error) {
+      for (const x of list) {
+        const idx = bookmarks.value.findIndex(b => b.id === x.id)
+        if (idx !== -1) {
+          bookmarks.value[idx] = {
+            ...bookmarks.value[idx],
+            manualCategoryId: categoryId,
+            manualSet: opts.manual !== false,
+            categoryId
+          }
+        }
+      }
+      pushUndo({ type: 'moveBatch', items: snapshots })
+      return list.length
+    }
+    return 0
+  }
+
   // 批量添加标签
   async function addTagBatch(ids, tags) {
     for (const id of ids) {
@@ -544,9 +643,13 @@ export const useBookmarksStore = defineStore('bookmarks', () => {
     archive, unarchive,
     undoStack, undo,
     load, persistAll, add, update, remove, removeBatch, getById,
-    moveToCategory, addTagBatch, applyAutoClassify, restoreSnapshot,
+    moveToCategory, moveBatchToCategory, addTagBatch, applyAutoClassify, restoreSnapshot,
     toggleSelect, selectAll, clearSelection, isSelected,
+    // 按窗隔离的多选状态
+    activeSide, setActiveSide, selectedByPane, paneSize, paneHas, paneAdd, paneDelete, paneClear, paneSelectAll, paneSet,
     setSort, recordOpen, reorder, togglePin, setReadStatus, smartFolderResults,
-    focusMode
+    focusMode,
+    // 左右窗独立筛选
+    leftPane, rightPane, getPane, setPaneSort
   }
 })

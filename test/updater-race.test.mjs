@@ -638,6 +638,132 @@ describe('批处理脚本安全', () => {
 })
 
 // ============================================================
+// fetchGithubApi 重定向跟随 —— 修复"GitHub API 返回 301"误报
+// ============================================================
+describe('GitHub API 重定向跟随', () => {
+  // 直接实现一份 fetchGithubApi 的纯函数版本（逻辑同 electron/main/updater.js），
+  // 避免测试拉入 electron 主进程。这样可以验证：
+  // 1. 3xx + Location 时跳到下一跳
+  // 2. 多次重定向全部跟完
+  // 3. 没有 Location 时立即返回当前状态
+  // 4. 循环重定向有上限保护
+  async function fetchGithubApi(requestImpl, url, timeout = 1000, maxHops = 5) {
+    let currentUrl = url
+    for (let i = 0; i < maxHops; i++) {
+      const resp = await requestImpl(currentUrl, timeout)
+      if ([301, 302, 303, 307, 308].includes(resp.status) && resp.headers && resp.headers.location) {
+        try {
+          currentUrl = new URL(resp.headers.location, currentUrl).toString()
+        } catch {
+          break
+        }
+        continue
+      }
+      return resp
+    }
+    return requestImpl(currentUrl, timeout)
+  }
+
+  test('301 跟随一次后回到 200', async () => {
+    const calls = []
+    const req = async (url) => {
+      calls.push(url)
+      if (url.includes('old-owner')) {
+        return { status: 301, headers: { location: 'https://api.github.com/repos/new-owner/bookmark-manager-releases/releases/latest' } }
+      }
+      if (url.includes('new-owner')) {
+        return { status: 200, headers: {}, body: Buffer.from('{"tag_name":"v1.4.24"}') }
+      }
+      return { status: 404, headers: {}, body: Buffer.from('') }
+    }
+    const resp = await fetchGithubApi(req, 'https://api.github.com/repos/old-owner/bookmark-manager-releases/releases/latest')
+    assert.equal(resp.status, 200)
+    assert.equal(calls.length, 2)
+    assert.ok(calls[1].includes('new-owner'))
+  })
+
+  test('连续 302 → 301 → 200 全部跟随', async () => {
+    const calls = []
+    const req = async (url) => {
+      calls.push(url)
+      if (url.endsWith('/step1')) {
+        return { status: 302, headers: { location: '/step2' } }
+      }
+      if (url.endsWith('/step2')) {
+        return { status: 301, headers: { location: '/step3' } }
+      }
+      if (url.endsWith('/step3')) {
+        return { status: 200, headers: {}, body: Buffer.from('ok') }
+      }
+      return { status: 404, headers: {}, body: Buffer.from('') }
+    }
+    const resp = await fetchGithubApi(req, 'http://x/step1')
+    assert.equal(resp.status, 200)
+    assert.equal(calls.length, 3)
+  })
+
+  test('没有 Location 的 3xx 不应死循环', async () => {
+    let count = 0
+    const req = async () => {
+      count++
+      return { status: 301, headers: {} }  // 无 location
+    }
+    const resp = await fetchGithubApi(req, 'http://x/start')
+    assert.equal(resp.status, 301)
+    // 第一跳拿到 301 但没 location → 直接返回该响应 → 1 次调用
+    assert.equal(count, 1)
+  })
+
+  test('Location 为相对 URL 时正确拼接', async () => {
+    const calls = []
+    const req = async (url) => {
+      calls.push(url)
+      if (url === 'http://api.example.com/releases/latest') {
+        return { status: 302, headers: { location: '/releases' } }
+      }
+      return { status: 404, headers: {}, body: Buffer.from('') }
+    }
+    await fetchGithubApi(req, 'http://api.example.com/releases/latest')
+    assert.equal(calls.length, 2)
+    assert.equal(calls[1], 'http://api.example.com/releases')
+  })
+
+  test('多次重定向循环时遵守 maxHops 上限', async () => {
+    let count = 0
+    const req = async () => {
+      count++
+      return { status: 302, headers: { location: '/loop' } }
+    }
+    // 循环重定向：每次都跳到同一地址
+    await fetchGithubApi(req, 'http://x/loop', 500, 5)
+    // 第一次循环: i=0..4 → 5 次 302 + 第 6 次 fallback
+    assert.ok(count <= 6, `应被 maxHops 限制，实际调用 ${count} 次`)
+  })
+
+  test('200 直接返回，不发额外请求', async () => {
+    let count = 0
+    const req = async () => {
+      count++
+      return { status: 200, headers: {}, body: Buffer.from('ok') }
+    }
+    const resp = await fetchGithubApi(req, 'http://x/ok')
+    assert.equal(resp.status, 200)
+    assert.equal(count, 1, '首次 200 应立即返回，不发额外请求')
+  })
+
+  test('404 直接返回，不当 3xx 跳转', async () => {
+    let count = 0
+    const req = async () => {
+      count++
+      return { status: 404, headers: {}, body: Buffer.from('Not Found') }
+    }
+    const resp = await fetchGithubApi(req, 'http://x/404')
+    assert.equal(resp.status, 404)
+    assert.equal(count, 1)
+  })
+})
+
+// ============================================================
 // 状态机一致性测试
 // ============================================================
 describe('状态机一致性', () => {

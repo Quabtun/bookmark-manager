@@ -4,15 +4,16 @@
        @dragstart="onDragStart" @dragend="onDragEnd"
        @mouseenter="onHover" @mouseleave="onLeave"
        @dblclick="onDblClick"
-       @click.self="onClick"
+       @click="onClick"
        @contextmenu.prevent="onContext"
-    :class="['group relative rounded-lg p-3 cursor-pointer transition-all duration-150 hover:shadow-card',
+    :class="['group relative rounded-lg p-3 cursor-pointer transition-all duration-150 hover:shadow-card select-none',
              bmStore.isSelected(props.bm.id) ? 'ring-2 ring-accent bg-accent/5' : '',
              props.focused ? 'ring-2 ring-blue-400 bg-blue-50/50 dark:bg-blue-900/20' : '',
              'win-surface hover:border-accent/40',
-             bm.status === 'dead' ? 'opacity-60' : '']">
+             bm.status === 'dead' ? 'opacity-60' : '']"
+     style="padding-bottom: 2.5rem;">
     <!-- 置顶星标 -->
-    <button @click.stop="bmStore.togglePin(props.bm.id)" class="absolute top-2.5 left-3 text-lg opacity-0 group-hover:opacity-100 transition-opacity z-10" :class="props.bm.pinned ? 'opacity-100' : ''" :title="props.bm.pinned ? '取消置顶' : '置顶'">
+    <button draggable="false" @click.stop="bmStore.togglePin(props.bm.id)" class="absolute top-2.5 left-3 text-lg opacity-0 group-hover:opacity-100 transition-opacity z-10" :class="props.bm.pinned ? 'opacity-100' : ''" :title="props.bm.pinned ? '取消置顶' : '置顶'">
       {{ props.bm.pinned ? '⭐' : '☆' }}
     </button>
     <!-- 状态点 -->
@@ -60,36 +61,58 @@
     </div>
 
     <!-- 快速备注 -->
-    <div class="mt-2" @click.stop>
+    <div class="mt-2" @click.stop @mousedown.stop @dblclick.stop @mouseup.stop
+         @contextmenu.stop @keydown.stop @keyup.stop @input.stop @focus.stop>
       <div v-if="editingNotes" class="relative">
         <textarea ref="notesTextarea"
                   v-model="tempNotes"
-                  @keydown="onNotesKeydown"
+                  @keydown.exact="onNotesKeydown"
+                  @keyup.exact.stop
                   @blur="saveNotes"
-                  class="w-full text-xs bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 resize-none focus:outline-none focus:ring-1 focus:ring-accent"
-                  rows="2"
-                  placeholder="输入备注…"></textarea>
+                  @input="autoresize"
+                  @mousedown.stop
+                  @click.stop
+                  @dblclick.stop
+                  @contextmenu.stop
+                  class="w-full text-xs bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 resize-none focus:outline-none focus:ring-1 focus:ring-accent overflow-hidden"
+                  rows="1"
+                  placeholder="输入备注… Shift+Enter 换行"></textarea>
       </div>
-      <div v-else @click="startEditNotes" class="cursor-pointer text-xs truncate transition"
+      <div v-else @click="startEditNotes"
+           :title="bm.notes"
+           class="cursor-pointer text-xs break-words whitespace-pre-wrap leading-snug max-h-16 overflow-hidden"
            :class="bm.notes ? 'text-slate-500 dark:text-slate-400' : 'text-slate-300 dark:text-slate-600 hover:text-slate-400'">
         {{ bm.notes ? bm.notes : '+ 备注' }}
       </div>
     </div>
 
     <!-- 悬浮操作 -->
-    <div class="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
-      <button @click.stop="toggleReadStatus" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-amber-500 hover:text-white text-xs shadow" :class="currentReadStatus === 'done' ? 'bg-green-100 dark:bg-green-900/40' : currentReadStatus === 'reading' ? 'bg-blue-100 dark:bg-blue-900/40' : ''" :title="readStatusTooltip">{{ readStatusIcon }}</button>
-      <button @click.stop="$emit('edit', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-accent hover:text-white text-xs shadow" title="编辑">✏️</button>
-      <button @click.stop="$emit('validate', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-accent hover:text-white text-xs shadow" title="重新校验">🩺</button>
-      <button @click.stop="$emit('geo', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-accent hover:text-white text-xs shadow" title="服务器位置">📍</button>
-      <button @click.stop="$emit('archive', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-amber-500 hover:text-white text-xs shadow" title="归档">📦</button>
-      <button @click.stop="$emit('delete', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-red-500 hover:text-white text-xs shadow" title="删除">✕</button>
+    <div class="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition z-30"
+         @click.stop @dblclick.stop @mousedown.stop @mouseup.stop
+         @contextmenu.stop @dragstart.stop @dragend.stop>
+      <button draggable="false" @click.stop="toggleReadStatus" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-amber-500 hover:text-white text-xs shadow" :class="currentReadStatus === 'done' ? 'bg-green-100 dark:bg-green-900/40' : currentReadStatus === 'reading' ? 'bg-blue-100 dark:bg-blue-900/40' : ''" :title="readStatusTooltip">{{ readStatusIcon }}</button>
+      <button draggable="false" @click.stop="$emit('edit', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-accent hover:text-white text-xs shadow" title="编辑">✏️</button>
+      <button draggable="false" @click.stop="$emit('validate', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-accent hover:text-white text-xs shadow" title="重新校验">🩺</button>
+      <button draggable="false" @click.stop="$emit('geo', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-accent hover:text-white text-xs shadow" title="服务器位置">📍</button>
+      <!-- 回收站/归档视图下用恢复按钮替代归档/删除 -->
+      <template v-if="bm.recycled">
+        <button draggable="false" @click.stop="$emit('restore', bm)" class="w-7 h-7 rounded-lg bg-green-100 dark:bg-green-900/40 hover:bg-green-500 hover:text-white text-xs shadow" title="还原（恢复到书签列表）">↩️</button>
+        <button draggable="false" @click.stop="$emit('delete', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-red-500 hover:text-white text-xs shadow" title="永久删除">✕</button>
+      </template>
+      <template v-else-if="bm.archived">
+        <button draggable="false" @click.stop="$emit('unarchive', bm)" class="w-7 h-7 rounded-lg bg-green-100 dark:bg-green-900/40 hover:bg-green-500 hover:text-white text-xs shadow" title="还原（取消归档）">↩️</button>
+        <button draggable="false" @click.stop="$emit('delete', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-red-500 hover:text-white text-xs shadow" title="永久删除">✕</button>
+      </template>
+      <template v-else>
+        <button draggable="false" @click.stop="$emit('archive', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-amber-500 hover:text-white text-xs shadow" title="归档">📦</button>
+        <button draggable="false" @click.stop="$emit('delete', bm)" class="w-7 h-7 rounded-lg bg-white/80 dark:bg-slate-700/80 hover:bg-red-500 hover:text-white text-xs shadow" title="删除">✕</button>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useCategoriesStore } from '../stores/categories.js'
 import { useBookmarksStore } from '../stores/bookmarks.js'
 import { useUiStore } from '../stores/ui.js'
@@ -214,36 +237,50 @@ function onDrop(e) {
 }
 function onDragEnd() { window.__dragBookmarkId = null }
 
-let hoverTimer = null
 function onHover() {
-  clearTimeout(hoverTimer)
-  hoverTimer = setTimeout(() => emit('hover', props.bm), 500)
+  // 延迟由 HomeView.onHover 控制（300ms），这里直接转发避免双重计时
+  emit('hover', props.bm)
 }
 function onLeave() {
-  clearTimeout(hoverTimer)
   emit('leave', props.bm)
 }
 
 function onDblClick(e) {
-  // 双击始终用外部浏览器打开
+  // 双击：内部 WebPreview 预览（自动打开/激活右侧预览栏）
+  // Ctrl/Cmd+双击：跳外部默认浏览器
   e.preventDefault()
+  if (e && (e.ctrlKey || e.metaKey)) {
+    bmStore.recordOpen(props.bm.id)
+    window.api.invoke('browser:open', props.bm.url)
+    return
+  }
   bmStore.recordOpen(props.bm.id)
-  window.api.invoke('browser:open', props.bm.url)
+  emit('open', props.bm)
 }
 
 function onClick(e) {
-  // Ctrl+单击 → 多选切换
+  // Ctrl/Cmd+单击 → 多选切换（原有行为）
   if (e && (e.ctrlKey || e.metaKey)) {
     bmStore.toggleSelect(props.bm.id)
     return
   }
-  // 有选中项时，单击不清除选中（允许继续查看）
-  if (bmStore.selected.size > 0) {
-    bmStore.toggleSelect(props.bm.id)
+  // Shift+单击 → 范围选择（从最近点击的锚点到当前）
+  if (e && e.shiftKey) {
+    const all = bmStore.bookmarks.filter((b) => !b.recycled && !b.archived).map((b) => b.id)
+    const last = bmStore.__lastClickedId || props.bm.id
+    const a = all.indexOf(last)
+    const b = all.indexOf(props.bm.id)
+    if (a !== -1 && b !== -1) {
+      const [lo, hi] = a < b ? [a, b] : [b, a]
+      const next = new Set(bmStore.selected)
+      for (let i = lo; i <= hi; i++) next.add(all[i])
+      bmStore.selected = next
+    }
+    bmStore.__lastClickedId = props.bm.id
     return
   }
-  // 单击打开 WebPreview
-  emit('open', props.bm)
+  // 普通单击 → 不再切换选中，避免误触
+  // （保留 Ctrl/Cmd 切换与 Shift 范围选择）
 }
 function onContext(e) {
   emit('context', props.bm, e)
@@ -291,20 +328,36 @@ const notesTextarea = ref(null)
 function startEditNotes() {
   editingNotes.value = true
   tempNotes.value = props.bm.notes || ''
-  setTimeout(() => {
+  nextTick(() => {
+    autoresize()
     notesTextarea.value?.focus()
-  }, 50)
+    // 将光标移到末尾
+    if (notesTextarea.value) {
+      const ta = notesTextarea.value
+      ta.selectionStart = ta.selectionEnd = ta.value.length
+    }
+  })
 }
 
 function onNotesKeydown(e) {
   if (e.key === 'Escape') {
     editingNotes.value = false
     e.preventDefault()
+    e.stopPropagation()
+    return
   }
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     saveNotes()
     e.preventDefault()
+    e.stopPropagation()
   }
+}
+
+function autoresize() {
+  const ta = notesTextarea.value
+  if (!ta) return
+  ta.style.height = 'auto'
+  ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'
 }
 
 function saveNotes() {

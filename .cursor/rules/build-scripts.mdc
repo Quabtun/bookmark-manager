@@ -1,0 +1,17 @@
+---
+description: 构建脚本规范（中文路径项目）：直接执行命令构建，禁止生成含中文或带 BOM 的 .bat；后台脚本只用 UTF-8 BOM 的 PowerShell
+globs: ["**/*.bat","**/*.ps1","**/*"]
+---
+
+# 构建与脚本生成规范（Windows + 中文路径项目）
+
+1. **运行构建时直接在 Shell 里执行命令**（如 `npm run build`，Working Directory 指向项目目录），不要生成 .bat 包装脚本。
+2. 若确实需要后台/独立脚本，**只生成 PowerShell `.ps1`**：保存为 UTF-8 with BOM；含中文的路径不要直接写中文字面量，用 `[char]0xXXXX` 拼接（如 `[char]0x4E66`=书、`[char]0x7B7E`=签、`[char]0x7BA1`=管、`[char]0x7406`=理、`[char]0x5668`=器），并用 `Test-Path -LiteralPath` 校验。
+3. **禁止生成含中文路径、中文注释或 UTF-8 BOM 的 `.bat` 文件**：cmd.exe 在 GBK 控制台会把它们解析成乱码（首行出现 `锘緻echo`、中文路径变成 `涔︾�剧�＄悊鍣�`），导致"无法编译"。如必须用 .bat，文件须为 UTF-8 无 BOM，且开头两行固定为纯 ASCII：
+   ```
+   @echo off
+   chcp 65001 >nul
+   ```
+   中文内容只能出现在这两行之后。
+4. 构建清理阶段若报 "The process cannot access the file because it is being used by another process"，不要反复重试删除：先结束占用 dist/release 目录的 node/electron 进程，再清理重试。
+5. 构建日志写入 `%TEMP%\bm-build\` 时使用英文文件名。

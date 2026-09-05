@@ -72,7 +72,7 @@ function onKeydown(event) {
     if (active) activate(active.item)
   }
 }
-function onDocumentPointer(event) { if (menuRef.value && !menuRef.value.contains(event.target)) close() }
+function onDocumentMousedown(event) { if (menuRef.value && !menuRef.value.contains(event.target)) close() }
 function position() {
   nextTick(() => {
     const rect = menuRef.value?.getBoundingClientRect()
@@ -92,15 +92,16 @@ function handleResize() {
 watch(() => props.open, (open) => {
   if (open) {
     position()
-    setTimeout(() => document.addEventListener('pointerdown', onDocumentPointer), 0)
+    // 延迟注册避免打开菜单的 click 立即触发关闭
+    setTimeout(() => document.addEventListener('mousedown', onDocumentMousedown), 0)
     window.addEventListener('resize', handleResize)
   } else {
-    document.removeEventListener('pointerdown', onDocumentPointer)
+    document.removeEventListener('mousedown', onDocumentMousedown)
     window.removeEventListener('resize', handleResize)
   }
 })
 onUnmounted(() => {
-  document.removeEventListener('pointerdown', onDocumentPointer)
+  document.removeEventListener('mousedown', onDocumentMousedown)
   window.removeEventListener('resize', handleResize)
 })
 </script>

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useSettingsStore } from './settings.js'
 
 /**
@@ -17,13 +17,21 @@ export const useViewStateStore = defineStore('viewState', () => {
     leftPaneWidth: 0.42,
     leftSelectedKey: 'unclassified',  // 'all' | 'unclassified' | categoryId
     leftExpandedIds: [],
+    leftTreeCollapsed: false,        // 左窗分类树折叠状态（独立保存）
+    leftPaneCollapsed: false,        // 整个 OrganizerPane 左窗被折叠成窄条
     rightSelectedKey: '',              // 分类 id；空表示未选中
     rightExpandedIds: [],
-    lastActiveSide: 'right'
+    rightTreeCollapsed: false,        // 右窗分类树折叠状态（独立保存）
+    rightPaneCollapsed: false,       // 整个 OrganizerPane 右窗被折叠成窄条
+    lastActiveSide: 'right',
+    sidebarExpandedIds: [],            // Sidebar.vue 自带的分类树展开状态
+    sidebarCollapsed: false            // 最左 Sidebar 折叠成窄条
   }
 
   const organizer = ref({ ...defaults })
   const loaded = ref(false)
+  // 分类环境管理弹窗（不在 organizer 中，存储在 store 实例级别）
+  const envManagerOpen = ref(false)
 
   function load() {
     const incoming = settingsStore.settings?.organizer
@@ -32,6 +40,13 @@ export const useViewStateStore = defineStore('viewState', () => {
       // 兼容字段缺失
       organizer.value.leftExpandedIds = Array.isArray(incoming.leftExpandedIds) ? [...incoming.leftExpandedIds] : []
       organizer.value.rightExpandedIds = Array.isArray(incoming.rightExpandedIds) ? [...incoming.rightExpandedIds] : []
+      // 兼容新增折叠字段
+      if (typeof incoming.leftTreeCollapsed !== 'boolean') organizer.value.leftTreeCollapsed = defaults.leftTreeCollapsed
+      if (typeof incoming.rightTreeCollapsed !== 'boolean') organizer.value.rightTreeCollapsed = defaults.rightTreeCollapsed
+      // 兼容新增整窗折叠字段
+      if (typeof incoming.leftPaneCollapsed !== 'boolean') organizer.value.leftPaneCollapsed = defaults.leftPaneCollapsed
+      if (typeof incoming.rightPaneCollapsed !== 'boolean') organizer.value.rightPaneCollapsed = defaults.rightPaneCollapsed
+      if (typeof incoming.sidebarCollapsed !== 'boolean') organizer.value.sidebarCollapsed = defaults.sidebarCollapsed
     } else {
       organizer.value = { ...defaults }
     }
@@ -91,6 +106,31 @@ export const useViewStateStore = defineStore('viewState', () => {
     syncToSettings()
   }
 
+  function toggleLeftTreeCollapsed() {
+    organizer.value.leftTreeCollapsed = !organizer.value.leftTreeCollapsed
+    syncToSettings()
+  }
+
+  function toggleRightTreeCollapsed() {
+    organizer.value.rightTreeCollapsed = !organizer.value.rightTreeCollapsed
+    syncToSettings()
+  }
+
+  function toggleLeftPaneCollapsed() {
+    organizer.value.leftPaneCollapsed = !organizer.value.leftPaneCollapsed
+    syncToSettings()
+  }
+
+  function toggleRightPaneCollapsed() {
+    organizer.value.rightPaneCollapsed = !organizer.value.rightPaneCollapsed
+    syncToSettings()
+  }
+
+  function toggleSidebarCollapsed() {
+    organizer.value.sidebarCollapsed = !organizer.value.sidebarCollapsed
+    syncToSettings()
+  }
+
   return {
     organizer,
     loaded,
@@ -102,6 +142,13 @@ export const useViewStateStore = defineStore('viewState', () => {
     toggleRightExpanded,
     setLastActiveSide,
     setExpandedIds,
-    syncToSettings
+    syncToSettings,
+    toggleLeftTreeCollapsed,
+    toggleRightTreeCollapsed,
+    toggleLeftPaneCollapsed,
+    toggleRightPaneCollapsed,
+    toggleSidebarCollapsed,
+    envManagerOpen,
+    sidebarExpandedIds: computed(() => organizer.value.sidebarExpandedIds || [])
   }
 })
